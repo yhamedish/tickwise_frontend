@@ -3,12 +3,64 @@ import StockChart from './StockChart';
 import './index.css';
 import { BarChart2, ThumbsUp, MessageCircle, Activity } from 'lucide-react';
 
+/*
+ * NOTE
+ * The application originally contained a hard‑coded `dummyData` array.  To
+ * support live data, we still keep a copy of that array as a fallback but
+ * introduce state variables which are populated by fetching a JSON file from
+ * Azure Blob Storage.  See the `useEffect` hook further down for details.
+ */
 const dummyData = [
-  { ticker: 'AAPL', company: 'Apple Inc.', recommendation: 'Buy', confidence: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, forecast1y: 28 },
-  { ticker: 'TSLA', company: 'Tesla Inc.', recommendation: 'Hold', confidence: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, forecast1y: 12 },
-  { ticker: 'AMZN', company: 'Amazon.com Inc.', recommendation: 'Sell', confidence: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, forecast1y: 8 },
-  { ticker: 'MSFT', company: 'Microsoft Corp.', recommendation: 'Buy', confidence: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, forecast1y: 25 },
-  { ticker: 'NFLX', company: 'Netflix Inc.', recommendation: 'Sell', confidence: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, forecast1y: 10 }
+  {
+    ticker: 'AAPL',
+    company: 'Apple Inc.',
+    recommendation: 'Buy',
+    confidence: 92,
+    sentiment: 0.85,
+    technical: 0.78,
+    forecast1m: 5.3,
+    forecast1y: 28,
+  },
+  {
+    ticker: 'TSLA',
+    company: 'Tesla Inc.',
+    recommendation: 'Hold',
+    confidence: 75,
+    sentiment: 0.4,
+    technical: 0.5,
+    forecast1m: -0.2,
+    forecast1y: 12,
+  },
+  {
+    ticker: 'AMZN',
+    company: 'Amazon.com Inc.',
+    recommendation: 'Sell',
+    confidence: 68,
+    sentiment: -0.2,
+    technical: 0.3,
+    forecast1m: -3.1,
+    forecast1y: 8,
+  },
+  {
+    ticker: 'MSFT',
+    company: 'Microsoft Corp.',
+    recommendation: 'Buy',
+    confidence: 88,
+    sentiment: 0.7,
+    technical: 0.9,
+    forecast1m: 4.7,
+    forecast1y: 25,
+  },
+  {
+    ticker: 'NFLX',
+    company: 'Netflix Inc.',
+    recommendation: 'Sell',
+    confidence: 70,
+    sentiment: -0.1,
+    technical: 0.4,
+    forecast1m: -2.5,
+    forecast1y: 10,
+  },
 ];
 
 const priceHistory = {
@@ -62,32 +114,102 @@ function addDays(dateString, days) {
 function App() {
   const [expandedTicker, setExpandedTicker] = useState(null);
 
-  const topBuys = dummyData.filter(stock => stock.recommendation === 'Buy');
-  const topSells = dummyData.filter(stock => stock.recommendation === 'Sell');
+  // New state variables for loading data from Azure Blob Storage
+  const [stocksData, setStocksData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  //statistics parameters
-  const totalAnalyzed = dummyData.length;
-  const buyCount = dummyData.filter(s => s.recommendation === 'Buy').length;
-  const sellCount = dummyData.filter(s => s.recommendation === 'Sell').length;
-  const holdCount = dummyData.filter(s => s.recommendation === 'Hold').length;
+  /*
+   * Fetch stock recommendations from an Azure Blob Storage JSON file using a
+   * SAS (shared access signature) URL.  The SAS URL should be provided via a
+   * Vite environment variable named VITE_STOCKS_JSON_SAS_URL.  Exposing
+   * credentials in source code is not recommended, so environment variables
+   * allow you to keep secrets out of version control.  When the component
+   * mounts, we attempt to retrieve the JSON.  If the fetch fails (for
+   * example, because the SAS token has expired or CORS is not configured), the
+   * error is captured and the dummyData fallback will be used.
+   */
+  useEffect(() => {
+    const sasUrl = import.meta.env.VITE_STOCKS_JSON_SAS_URL;
+    async function loadData() {
+      if (!sasUrl) {
+        // No URL provided – skip remote fetch and fall back on dummy data
+        setLoading(false);
+        return;
+      }
+      try {
+        const response = await fetch(sasUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch stocks: ${response.status}`);
+        }
+        const json = await response.json();
+        // Expect the JSON to be an array of stock recommendation objects
+        setStocksData(Array.isArray(json) ? json : []);
+      } catch (err) {
+        console.error(err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
 
-  const avgBuyConfidence = (
-    dummyData
-      .filter(s => s.recommendation === 'Buy')
-      .reduce((sum, s) => sum + s.confidence, 0) / buyCount
-  ).toFixed(1);
-
-  const avgSentiment = (
-    dummyData.reduce((sum, s) => sum + s.sentiment, 0) / totalAnalyzed
-  ).toFixed(2);
+  // Determine the data source: prefer remote data, fall back to dummyData
+  const dataSource = stocksData && stocksData.length > 0 ? stocksData : dummyData;
 
   // search terms for search and filter
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
 
+  // Apply search and rating filters to the data when building the lists.  The
+  // search term matches against both the ticker and company name.  Rating
+  // filtering is case‑insensitive on the recommendation field.
+  const filteredData = dataSource.filter((stock) => {
+    const matchesSearch = searchTerm
+      ? stock.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        stock.company.toLowerCase().includes(searchTerm.toLowerCase())
+      : true;
+    const matchesFilter = filterType
+      ? stock.recommendation.toLowerCase() === filterType.toLowerCase()
+      : true;
+    return matchesSearch && matchesFilter;
+  });
+
+  const topBuys = filteredData.filter((stock) => stock.recommendation === 'Buy');
+  const topSells = filteredData.filter((stock) => stock.recommendation === 'Sell');
+
+  // statistics parameters
+  const totalAnalyzed = dataSource.length;
+  const buyCount = dataSource.filter((s) => s.recommendation === 'Buy').length;
+  const sellCount = dataSource.filter((s) => s.recommendation === 'Sell').length;
+  const holdCount = dataSource.filter((s) => s.recommendation === 'Hold').length;
+
+  const avgBuyConfidence = buyCount
+    ? (
+        dataSource
+          .filter((s) => s.recommendation === 'Buy')
+          .reduce((sum, s) => sum + s.confidence, 0) / buyCount
+      ).toFixed(1)
+    : '0.0';
+
+  const avgSentiment = totalAnalyzed
+    ? (
+        dataSource.reduce((sum, s) => sum + s.sentiment, 0) / totalAnalyzed
+      ).toFixed(2)
+    : '0.00';
+
+
   return (
     <div className="min-h-screen bg-gray-100 text-gray-900 p-6">
       <h1 className="text-2xl font-bold mb-6">AI Stock Recommendations</h1>
+      {/* Show loading or error state messages */}
+      {loading && (
+        <p className="mb-4 text-blue-600">Loading stock data...</p>
+      )}
+      {error && !loading && (
+        <p className="mb-4 text-red-600">Failed to load stock data: {error}</p>
+      )}
       
       {/* Displaying the statistic cards at the top */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -196,8 +318,8 @@ function App() {
                       <td className="px-3 py-2 font-medium">{stock.ticker}</td>
                       <td className="px-3 py-2">{stock.company}</td>
                       <td className="px-3 py-2">{stock.confidence}%</td>
-                      <td className="px-3 py-2">{(stock.sentiment * 100).toFixed(1)}%</td>
-                      <td className="px-3 py-2">{(stock.technical * 100).toFixed(1)}%</td>
+                      <td className="px-3 py-2">{(stock.sentiment).toFixed(1)}%</td>
+                      <td className="px-3 py-2">{(stock.technical).toFixed(1)}%</td>
                       <td className="px-3 py-2">{stock.forecast1m > 0 ? '+' : ''}{stock.forecast1m}%</td>
                       <td className="px-3 py-2">{stock.forecast1y}%</td>
                     </tr>
@@ -215,9 +337,16 @@ function App() {
                             </div>
                           </div>
                           <StockChart
+                            ticker={stock.ticker}
                             priceData={priceHistory[stock.ticker] || []}
-                            mlForecast={generateForecastLine(priceHistory[stock.ticker], stock.forecast1m)}
-                            analystForecast={generateForecastLine(priceHistory[stock.ticker], stock.forecast1y)}
+                            mlForecast={generateForecastLine(
+                              priceHistory[stock.ticker],
+                              stock.forecast1m,
+                            )}
+                            analystForecast={generateForecastLine(
+                              priceHistory[stock.ticker],
+                              stock.forecast1y,
+                            )}
                           />
                         </td>
                       </tr>

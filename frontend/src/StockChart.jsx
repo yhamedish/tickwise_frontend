@@ -8,11 +8,19 @@ const StockChart = ({ ticker, priceData, mlForecast, analystForecast }) => {
   useEffect(() => {
     if (!priceData || priceData.length === 0) return;
 
-    const ohlc = priceData.map(item => [item.open, item.close, item.low, item.high]);
-    const dates = priceData.map(item => item.time);
+    // Build candlestick data and separate date arrays once.
+    const ohlc = priceData.map((item) => [item.open, item.close, item.low, item.high]);
+    const dates = priceData.map((item) => item.time);
 
-    const mlLine = mlForecast.map((item, idx) => [dates[idx], item]);
-    const analystLine = analystForecast.map((item, idx) => [dates[idx], item]);
+    /*
+     * The original implementation constructed forecast lines by pairing an
+     * existing price date with the forecast value.  That approach broke when
+     * the forecast contained its own timestamps.  Here we instead map each
+     * forecast item to a tuple of [time, value], preserving the timestamp
+     * returned by the forecast generator.  This yields a more accurate chart.
+     */
+    const mlLine = mlForecast.map((item) => [item.time, item.value]);
+    const analystLine = analystForecast.map((item) => [item.time, item.value]);
 
     const option = {
       title: { text: `${ticker} Price & Forecast`, left: 'center' },
