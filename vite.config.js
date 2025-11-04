@@ -3,5 +3,5 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/tickwise_frontend/', // ✅ your repo name
+  base: '/', // ✅ your repo name
 })
