@@ -43,6 +43,9 @@ jobs:
           VITE_CONTAINER_SAS_URL: ${{ secrets.VITE_CONTAINER_SAS_URL }}
           VITE_STOCKS_JSON_SAS_URL: ${{ secrets.VITE_STOCKS_JSON_SAS_URL }}
 
+      - name: Add CNAME file
+        run: echo "tickwisetech.com" > dist/CNAME
+        
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -52,5 +55,4 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Add CNAME file
-        run: echo "tickwisetech.com" > dist/CNAME
+      
