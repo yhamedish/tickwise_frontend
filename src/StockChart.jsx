@@ -65,7 +65,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
 
       legend: {
         top: 30,
-        data: ['Candlestick', 'ML Forecast', 'Analyst Forecast', 'Volume'],
+        data: [ticker, 'ML Forecast', 'Analyst Forecast', 'Volume'],
       },
 
       toolbox: {

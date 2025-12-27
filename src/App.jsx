@@ -29,16 +29,40 @@ function generateForecastLine(priceData, percentChange) {
 }
 
 // Simple date math helper used for forecasts.
-function addDays(dateString, days) {
-  const date = new Date(dateString);
-  // Safeguard against invalid dates. If parsing fails, simply return the input string
-  // to avoid throwing a RangeError when calling toISOString(). This ensures that
-  // the forecast line generation doesn't break when an unexpected date format is encountered.
-  if (isNaN(date.getTime())) {
-    return dateString;
+function addDays(dateLike, days) {
+  const iso = normalizeToISODate(dateLike);
+  if (!iso) return dateLike;
+
+  const d = new Date(iso); // iso is YYYY-MM-DD
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+
+function normalizeToISODate(value) {
+  if (value == null) return "";
+
+  // Already a Date?
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
   }
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+
+  const s = String(value).trim();
+
+  // Numeric? (unix seconds or ms)
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    // heuristic: >= 1e12 is ms, otherwise seconds
+    const ms = n >= 1e12 ? n : n * 1000;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  }
+
+  // ISO-ish string
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "";
+
+  return d.toISOString().slice(0, 10);
 }
 
 function App() {
@@ -55,22 +79,24 @@ function App() {
 
   // Environment variable for the container SAS URL. Should look like
   // "https://<account>.blob.core.windows.net/<container>?<sas>".
-  const containerSasUrl = import.meta.env.VITE_CONTAINER_SAS_URL;
-  // Environment variable for the top stocks JSON SAS URL. Should point directly
-  // at the JSON blob.
-  const stocksSasUrl = import.meta.env.VITE_STOCKS_JSON_SAS_URL;
+  // const containerSasUrl = import.meta.env.VITE_CONTAINER_SAS_URL;
+  // // Environment variable for the top stocks JSON SAS URL. Should point directly
+  // // at the JSON blob.
+  // const stocksSasUrl = import.meta.env.VITE_STOCKS_JSON_SAS_URL;
 
+  const base = import.meta.env.VITE_GCS_PUBLIC_BASE;
+  const scoresUrl = `${base}/today_recommendations.json`;
   // Load top stocks once on mount. If not available or fails, fall back to dummy data.
   useEffect(() => {
     const fetchStocks = async () => {
-      if (!stocksSasUrl) {
+      if (!scoresUrl) {
         console.warn('VITE_STOCKS_JSON_SAS_URL is not set. Falling back to dummy data.');
         setStocksData(dummyData);
         setLoadingStocks(false);
         return;
       }
       try {
-        const response = await fetch(stocksSasUrl);
+        const response = await fetch(scoresUrl);
         if (!response.ok) {
           throw new Error(`Failed to fetch stocks data: ${response.status} ${response.statusText}`);
         }
@@ -90,13 +116,13 @@ function App() {
       }
     };
     fetchStocks();
-  }, [stocksSasUrl]);
+  }, [scoresUrl]);
 
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
     if (!expandedTicker) return;
     if (priceHistory[expandedTicker]) return;
-    if (!containerSasUrl) {
+    if (!base) {
       console.warn('VITE_CONTAINER_SAS_URL is not set. Cannot fetch price history.');
       return;
     }
@@ -105,12 +131,15 @@ function App() {
         // Split containerSasUrl into base and SAS parameters. Append the blob path
         // before the SAS to form the correct URL. This avoids placing the path
         // after the query string, which would result in authentication errors.
-        const [baseUrl, sasParams] = containerSasUrl.split('?');
-        const blobPath = `stocks/${expandedTicker}.json`;
-        const blobUrl = sasParams
-          ? `${baseUrl.replace(/\/$/, '')}/${blobPath}?${sasParams}`
-          : `${baseUrl.replace(/\/$/, '')}/${blobPath}`;
-        const response = await fetch(blobUrl);
+        // const [baseUrl, sasParams] = containerSasUrl.split('?');
+        // const blobPath = `stocks/${expandedTicker}.json`;
+        // const blobUrl = sasParams
+        //   ? `${baseUrl.replace(/\/$/, '')}/${blobPath}?${sasParams}`
+        //   : `${baseUrl.replace(/\/$/, '')}/${blobPath}`;
+        // const response = await fetch(blobUrl);
+        const historyUrl = `${base}/data/${expandedTicker}.json`;
+        const response = await fetch(historyUrl);
+
         if (!response.ok) {
           throw new Error(`Failed to fetch ${blobUrl}: ${response.status} ${response.statusText}`);
         }
@@ -119,28 +148,20 @@ function App() {
         console.log(json)
         const formatted = Array.isArray(json)
           ? json.map(item => {
-              // Normalize the date string to YYYY-MM-DD. The backend provides
-              // timestamps like "2000-01-04T00:00:00.000"; slice the first 10
-              // characters to get a simple date. This avoids issues with
-              // unspecified time zones and ensures it can be parsed by Date().
-              const dateStr = (item.date || item.Date || '').toString().slice(0, 10);
-              // Clean numeric fields to remove commas before conversion. Some APIs
-              // return values like "1,234.56" which would otherwise parse as NaN.
-              // const cleanNumber = (value) => {
-              //   const str = String(value ?? '').replace(/,/g, '');
-              //   const num = parseFloat(str);
-              //   return isNaN(num) ? undefined : num;
-              // };
+              const rawTime = item.date ?? item.Date ?? item.time ?? item.Time;
+              const dateStr = normalizeToISODate(rawTime);
+
               return {
                 time: dateStr,
-                open: item.Open,
-                high: item.High,
-                low: item.Low,
-                close: item.Close,
-                volume: item.Volume,
+                open: Number(item.Open),
+                high: Number(item.High),
+                low: Number(item.Low),
+                close: Number(item.Close),
+                volume: Number(item.Volume) || 0,
               };
-            })
+            }).filter(r => r.time) // drop rows that didn't parse
           : [];
+
         setPriceHistory(prev => ({ ...prev, [expandedTicker]: formatted }));
         
       } catch (err) {
@@ -148,7 +169,7 @@ function App() {
       }
     };
     fetchHistory();
-  }, [expandedTicker, containerSasUrl, priceHistory]);
+  }, [expandedTicker, base, priceHistory]);
 
   // Partition the stocks into buys and sells based on the fetched list.
   const topBuys = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'buy');
