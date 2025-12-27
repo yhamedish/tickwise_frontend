@@ -40,8 +40,7 @@ jobs:
       - name: Build app
         run: npm run build
         env:
-          VITE_CONTAINER_SAS_URL: ${{ secrets.VITE_CONTAINER_SAS_URL }}
-          VITE_STOCKS_JSON_SAS_URL: ${{ secrets.VITE_STOCKS_JSON_SAS_URL }}
+          VITE_GCS_PUBLIC_BASE: ${{ secrets.VITE_GCS_PUBLIC_BASE }}
 
       - name: Add CNAME file
         run: echo "tickwisetech.com" > dist/CNAME
