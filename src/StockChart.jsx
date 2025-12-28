@@ -102,6 +102,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           // params is an array of all series at that x point
           const date = params[0].axisValue;
           const candle = params.find(p => p.seriesType === 'candlestick');
+          console.log('candle')
+          console.log(candle)
           const volume = params.find(p => p.seriesName === 'Volume');
           const ml = params.find(p => p.seriesName === 'ML Forecast');
           const analyst = params.find(p => p.seriesName === 'Analyst Forecast');
@@ -116,7 +118,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
               : (Array.isArray(candle.data) ? candle.data : null);
 
             if (v) {
-              const [open, close, low, high] = v;
+              const [idx, open, close, low, high] = v;
               text += `Open: ${open}<br/>Close: ${close}<br/>Low: ${low}<br/>High: ${high}<br/>`;
             }
           }
