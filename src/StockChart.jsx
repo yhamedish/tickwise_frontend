@@ -1,6 +1,20 @@
 import React, { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 
+function computeCutoffIndex(timesISO, months = 4) {
+  if (!timesISO?.length) return 0;
+
+  const last = new Date(timesISO[timesISO.length - 1]); // YYYY-MM-DD
+  const cutoff = new Date(last);
+  cutoff.setMonth(cutoff.getMonth() - months);
+
+  // find first index >= cutoff
+  const cutoffISO = cutoff.toISOString().slice(0, 10);
+  const idx = timesISO.findIndex(t => t >= cutoffISO);
+  return idx === -1 ? 0 : idx;
+}
+
+
 const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }) => {
   console.log('after mod')
   console.log(priceData)
@@ -15,8 +29,60 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
 
     // Extract OHLC arrays for the candlestick series. ECharts expects the
     // ordering: [open, close, low, high].
+    console.log('pricedata:')
+    console.log(priceData)
     const ohlc = priceData.map(item => [item.open, item.close, item.low, item.high]);
     const dates = priceData.map(item => item.time);
+    const cutoffIndex = computeCutoffIndex(dates, 4);
+
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    const updatePriceYAxisToZoom = () => {
+      const opt = chartInstance.current?.getOption();
+      if (!opt?.dataZoom?.length) return;
+
+      // your zoom is dataZoom[0] with startValue/endValue
+      const dz = opt.dataZoom[0];
+
+      // Prefer startValue/endValue; fall back to percent if needed
+      let start = dz.startValue;
+      let end = dz.endValue;
+
+      if (start == null && dz.start != null) start = Math.floor((dz.start / 100) * (dates.length - 1));
+      if (end == null && dz.end != null) end = Math.floor((dz.end / 100) * (dates.length - 1));
+
+      start = clamp(start ?? 0, 0, dates.length - 1);
+      end = clamp(end ?? (dates.length - 1), 0, dates.length - 1);
+      if (end < start) [start, end] = [end, start];
+
+      // Compute min(low) and max(high) in the visible window
+      let minLow = Infinity;
+      let maxHigh = -Infinity;
+      for (let i = start; i <= end; i++) {
+        const low = ohlc[i][2];
+        const high = ohlc[i][3];
+        if (low < minLow) minLow = low;
+        if (high > maxHigh) maxHigh = high;
+      }
+      if (!isFinite(minLow) || !isFinite(maxHigh)) return;
+
+      // Add a bit of padding so candles don’t touch top/bottom
+      const range = Math.max(1e-9, maxHigh - minLow);
+      const pad = range * 0.06;
+
+      chartInstance.current.setOption(
+        {
+          yAxis: [
+            { min: minLow - pad, max: maxHigh + pad, scale: true, gridIndex: 0 },
+            {} // keep volume axis unchanged
+          ]
+        },
+        { lazyUpdate: true }
+      );
+      
+
+    };
+
 
     // Map forecast data into ECharts series format. Each forecast entry has
     // { time, value }. We map it to [time, value]. If no forecast is provided
@@ -43,9 +109,18 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           let text = `<b>${date}</b><br/>`;
 
           if (candle) {
-            const [open, close, low, high] = candle.data;
-            text += `Open: ${open}<br/>Close: ${close}<br/>Low: ${low}<br/>High: ${high}<br/>`;
+            // ECharts candlestick tooltip values are usually in `value`
+            // (and sometimes `data` is an object), so guard it.
+            const v = Array.isArray(candle.value)
+              ? candle.value
+              : (Array.isArray(candle.data) ? candle.data : null);
+
+            if (v) {
+              const [open, close, low, high] = v;
+              text += `Open: ${open}<br/>Close: ${close}<br/>Low: ${low}<br/>High: ${high}<br/>`;
+            }
           }
+
 
           if (volume) {
             text += `Volume: ${volume.data.toLocaleString()}<br/>`;
@@ -94,6 +169,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
       xAxis: [
         {
           type: 'category',
+          max: value => value.max + 5,
           data: dates,
           scale: true,
           boundaryGap: false,
@@ -118,12 +194,29 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           splitLine: { show: false },
         },
       ],
+      // dataZoom: [
+      //   { type: 'inside', xAxisIndex: [0, 1] },
+      //   { type: 'inside', yAxisIndex: [0] },
+      //   { type: 'slider', xAxisIndex: [0] },
+      //   { type: 'slider', yAxisIndex: [0], right: 0 }
+      // ],
       dataZoom: [
-        { type: 'inside', xAxisIndex: [0, 1] },
-        { type: 'inside', yAxisIndex: [0] },
-        { type: 'slider', xAxisIndex: [0] },
-        { type: 'slider', yAxisIndex: [0], right: 0 }
+        {
+          type: 'inside',
+          xAxisIndex: 0,
+          startValue: cutoffIndex,
+          endValue: dates.length - 1
+        },
+        {
+          type: 'slider',
+          xAxisIndex: 0,
+          startValue: cutoffIndex,
+          endValue: dates.length - 1,
+          height: 22,
+          bottom: 6
+        }
       ],
+
       series: [
         {
           name: ticker,
@@ -182,6 +275,13 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     // the available space. Without this, charts embedded in table cells
     // sometimes render blank until a resize event occurs.
     chartInstance.current.resize();
+    // ✅ attach zoom handler ONCE (outside the function)
+    chartInstance.current.off('dataZoom');
+    chartInstance.current.on('dataZoom', updatePriceYAxisToZoom);
+
+    // ✅ set initial y-range to the default zoom window
+    updatePriceYAxisToZoom();
+
 
     return () => {
       chartInstance.current?.dispose();
