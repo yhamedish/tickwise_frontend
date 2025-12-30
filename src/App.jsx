@@ -24,7 +24,7 @@ function generateForecastLine(priceData, percentChange) {
   const forecastValue = lastClose * (1 + percentChange / 100);
   return [
     { time: lastTime, value: lastClose },
-    { time: addDays(lastTime, 1), value: forecastValue },
+    { time: addDays(lastTime, 30), value: forecastValue },
   ];
 }
 
@@ -301,7 +301,8 @@ function App() {
                     <th className="px-3 py-2">Confidence</th>
                     <th className="px-3 py-2">Sentiment</th>
                     <th className="px-3 py-2">Technical</th>
-                    <th className="px-3 py-2">1M Forecast</th>
+                    <th className="px-3 py-2">1M AI Upper %</th>
+                    <th className="px-3 py-2">1M AI Lower %</th>
                     <th className="px-3 py-2">1Y Forecast</th>
                   </tr>
                 </thead>
@@ -317,7 +318,8 @@ function App() {
                         <td className="px-3 py-2">{stock.confidence}%</td>
                         <td className="px-3 py-2">{(Number(stock.sentiment)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.technical)).toFixed(1)}%</td>
-                        <td className="px-3 py-2">{stock.forecast1m > 0 ? '+' : ''}{stock.forecast1m}%</td>
+                        <td className="px-3 py-2">{Number((stock.forecast1m_p5 - stock.Close)*100/stock.Close).toFixed(1)}</td>
+                        <td className="px-3 py-2">{Number((stock.forecast1m_p95 - stock.Close)*100/stock.Close).toFixed(1)}</td>
                         <td className="px-3 py-2">{stock.forecast1y}%</td>
                       </tr>
                       {expandedTicker === stock.ticker && (
@@ -339,7 +341,7 @@ function App() {
                               priceData={priceHistory[stock.ticker] || []}
                               mlForecast={generateForecastLine(
                                 priceHistory[stock.ticker] || [],
-                                stock.forecast1m
+                                (stock.forecast1m - stock.Close)*100/stock.Close
                               )}
                               analystForecast={generateForecastLine(
                                 priceHistory[stock.ticker] || [],

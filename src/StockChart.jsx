@@ -16,8 +16,6 @@ function computeCutoffIndex(timesISO, months = 4) {
 
 
 const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }) => {
-  console.log('after mod')
-  console.log(priceData)
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
@@ -29,10 +27,30 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
 
     // Extract OHLC arrays for the candlestick series. ECharts expects the
     // ordering: [open, close, low, high].
-    console.log('pricedata:')
-    console.log(priceData)
     const ohlc = priceData.map(item => [item.open, item.close, item.low, item.high]);
     const dates = priceData.map(item => item.time);
+    // // add ML forecast x-values that aren't already present
+    // for (const { time } of mlForecast) {
+    //   if (time && !dates.includes(time)) dates.push(time);
+    // }
+
+        // If you have a target future date in mlForecast (e.g., last+30d)
+    const future = mlForecast?.[mlForecast.length - 1]?.time; // 'YYYY-MM-DD'
+    const future_ml_val = mlForecast?.[mlForecast.length - 1]?.value;
+    if (future) {
+      const last = dates[dates.length - 1]; // last candle date
+      const d = new Date(last + 'T00:00:00');
+      const end = new Date(future + 'T00:00:00');
+
+      // add each missing day as a category to create proportional spacing
+      while (d < end) {
+        d.setDate(d.getDate() + 1);
+        const iso = d.toISOString().slice(0, 10);
+        if (!dates.includes(iso)) {
+          dates.push(iso);
+        }
+      }
+    }
     const cutoffIndex = computeCutoffIndex(dates, 4);
 
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -48,11 +66,11 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
       let start = dz.startValue;
       let end = dz.endValue;
 
-      if (start == null && dz.start != null) start = Math.floor((dz.start / 100) * (dates.length - 1));
-      if (end == null && dz.end != null) end = Math.floor((dz.end / 100) * (dates.length - 1));
+      if (start == null && dz.start != null) start = Math.floor((dz.start / 100) * (ohlc.length - 1));
+      if (end == null && dz.end != null) end = Math.floor((dz.end / 100) * (ohlc.length - 1));
 
-      start = clamp(start ?? 0, 0, dates.length - 1);
-      end = clamp(end ?? (dates.length - 1), 0, dates.length - 1);
+      start = clamp(start ?? 0, 0, ohlc.length - 1);
+      end = clamp(end ?? (ohlc.length - 1), 0, ohlc.length - 1);
       if (end < start) [start, end] = [end, start];
 
       // Compute min(low) and max(high) in the visible window
@@ -64,6 +82,13 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
         if (low < minLow) minLow = low;
         if (high > maxHigh) maxHigh = high;
       }
+      console.log('future')
+      console.log(future)
+      console.log('maxHigh')
+      console.log(maxHigh)
+      if (future_ml_val > maxHigh) maxHigh = future_ml_val;
+      if (future_ml_val < minLow) minLow = future_ml_val;
+
       if (!isFinite(minLow) || !isFinite(maxHigh)) return;
 
       // Add a bit of padding so candles don’t touch top/bottom
@@ -89,8 +114,11 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     // or the length doesn't match the main price series, ECharts will still
     // render the points on the correct dates.
     const mlLine = mlForecast.map(item => [item.time, item.value]);
+    console.log('ml line')
+    console.log(mlLine)
     const analystLine = analystForecast.map(item => [item.time, item.value]);
     const volumes = priceData.map(item => item.volume || 0);
+
 
     const option = {
       title: { text: `${ticker} Price & Forecast`, left: 'center' },
@@ -102,8 +130,6 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           // params is an array of all series at that x point
           const date = params[0].axisValue;
           const candle = params.find(p => p.seriesType === 'candlestick');
-          console.log('candle')
-          console.log(candle)
           const volume = params.find(p => p.seriesName === 'Volume');
           const ml = params.find(p => p.seriesName === 'ML Forecast');
           const analyst = params.find(p => p.seriesName === 'Analyst Forecast');
