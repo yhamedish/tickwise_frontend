@@ -6,13 +6,13 @@ import { BarChart2, ThumbsUp, MessageCircle, Activity } from 'lucide-react';
 // Dummy fallback data. If the call to VITE_STOCKS_JSON_SAS_URL fails, the
 // application will fall back to this list. Each entry must include the same
 // fields as the remote JSON: ticker, company, recommendation (Buy/Hold/Sell),
-// confidence, sentiment, technical, forecast1m, forecast1y.
+// confidence, sentiment, technical, forecast1m, analysts_forecast.
 const dummyData = [
-  { ticker: 'AAPL', company: 'Apple Inc.', recommendation: 'Buy', confidence: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, forecast1y: 28 },
-  { ticker: 'TSLA', company: 'Tesla Inc.', recommendation: 'Hold', confidence: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, forecast1y: 12 },
-  { ticker: 'AMZN', company: 'Amazon.com Inc.', recommendation: 'Sell', confidence: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, forecast1y: 8 },
-  { ticker: 'MSFT', company: 'Microsoft Corp.', recommendation: 'Buy', confidence: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, forecast1y: 25 },
-  { ticker: 'NFLX', company: 'Netflix Inc.', recommendation: 'Sell', confidence: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, forecast1y: 10 }
+  { ticker: 'AAPL', company: 'Apple Inc.', recommendation: 'Buy', confidence: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, analysts_forecast: 28 },
+  { ticker: 'TSLA', company: 'Tesla Inc.', recommendation: 'Hold', confidence: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, analysts_forecast: 12 },
+  { ticker: 'AMZN', company: 'Amazon.com Inc.', recommendation: 'Sell', confidence: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, analysts_forecast: 8 },
+  { ticker: 'MSFT', company: 'Microsoft Corp.', recommendation: 'Buy', confidence: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, analysts_forecast: 25 },
+  { ticker: 'NFLX', company: 'Netflix Inc.', recommendation: 'Sell', confidence: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, analysts_forecast: 10 }
 ];
 
 // Helper to generate forecast lines for the chart. Takes the last close price and applies
@@ -176,12 +176,9 @@ function App() {
     };
     fetchHistory();
   }, [expandedTicker, base, priceHistory]);
-  console.log('test')
-  console.log(priceHistory)
   // Partition the stocks into buys and sells based on the fetched list.
   const topBuys = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'buy');
   const topSells = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'sell');
-
   // Compute statistics for the summary cards.
   const totalAnalyzed = stocksData.length;
   const buyCount = stocksData.filter(s => s.recommendation?.toLowerCase() === 'buy').length;
@@ -308,9 +305,10 @@ function App() {
                     <th className="px-3 py-2">Confidence</th>
                     <th className="px-3 py-2">Sentiment</th>
                     <th className="px-3 py-2">Technical</th>
-                    <th className="px-3 py-2">1M AI Upper %</th>
-                    <th className="px-3 py-2">1M AI Lower %</th>
-                    <th className="px-3 py-2">1Y Forecast</th>
+                    <th className="px-3 py-2">Fundamental</th>
+                    <th className="px-3 py-2">AI 1M Upper %</th>
+                    <th className="px-3 py-2">AI 1M Lower %</th>
+                    <th className="px-3 py-2">Analysts 1Y Forecast %</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -325,9 +323,10 @@ function App() {
                         <td className="px-3 py-2">{stock.confidence}%</td>
                         <td className="px-3 py-2">{(Number(stock.sentiment)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.technical)).toFixed(1)}%</td>
+                        <td className="px-3 py-2">{(Number(stock.fundamental_score)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{Number((stock.forecast1m_p5 - stock.Close)*100/stock.Close).toFixed(1)}</td>
                         <td className="px-3 py-2">{Number((stock.forecast1m_p95 - stock.Close)*100/stock.Close).toFixed(1)}</td>
-                        <td className="px-3 py-2">{stock.forecast1y}%</td>
+                        <td className="px-3 py-2">{Number((stock.analysts_forecast - stock.Close)*100/stock.Close).toFixed(1)}</td>
                       </tr>
                       {expandedTicker === stock.ticker && (
                         <tr>
@@ -352,7 +351,7 @@ function App() {
                               )}
                               analystForecast={generateForecastLine(
                                 priceHistory[stock.ticker] || [],
-                                stock.forecast1y*0.01
+                                stock.analysts_forecast
                               )}
                             />
                           </td>
