@@ -8,6 +8,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-financial-charts/axes": "^2.0.0",
+    "@react-financial-charts/coordinates": "^2.0.0",
+    "@react-financial-charts/core": "^2.0.0",
+    "@react-financial-charts/scales": "^2.0.0",
+    "@react-financial-charts/series": "^2.0.0",
+    "@react-financial-charts/tooltip": "^2.0.0",
+    "d3-format": "^3.1.0",
+    "d3-time-format": "^4.1.0",
     "echarts": "^5.6.0",
     "lightweight-charts": "^4.2.3",
     "lucide-react": "^0.525.0",

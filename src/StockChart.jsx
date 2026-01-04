@@ -29,6 +29,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     // ordering: [open, close, low, high].
     const ohlc = priceData.map(item => [item.open, item.close, item.low, item.high]);
     const dates = priceData.map(item => item.time);
+    const volumes = priceData.map(item => item.volume || 0);
     // // add ML forecast x-values that aren't already present
     // for (const { time } of mlForecast) {
     //   if (time && !dates.includes(time)) dates.push(time);
@@ -48,6 +49,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
         const iso = d.toISOString().slice(0, 10);
         if (!dates.includes(iso)) {
           dates.push(iso);
+          ohlc.push([null, null, null, null]);   // pad candles
+          volumes.push(null);                    // pad volume
         }
       }
     }
@@ -79,26 +82,28 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
       for (let i = start; i <= end; i++) {
         const low = ohlc[i][2];
         const high = ohlc[i][3];
-        if (low < minLow) minLow = low;
-        if (high > maxHigh) maxHigh = high;
+        if (low != null && low < minLow) minLow = low;
+        if (high != null &&  high > maxHigh) maxHigh = high;
       }
-      console.log('future')
-      console.log(future)
-      console.log('maxHigh')
-      console.log(maxHigh)
-      if (future_ml_val > maxHigh) maxHigh = future_ml_val;
-      if (future_ml_val < minLow) minLow = future_ml_val;
+      if (future_ml_val != -100) {
+        if (future_ml_val > maxHigh) maxHigh = future_ml_val;
+        if (future_ml_val < minLow) minLow = future_ml_val;
+      }
+    
 
       if (!isFinite(minLow) || !isFinite(maxHigh)) return;
 
       // Add a bit of padding so candles don’t touch top/bottom
       const range = Math.max(1e-9, maxHigh - minLow);
       const pad = range * 0.06;
+      const DECIMALS = 0;
+      const roundDown = (v) => Math.floor(v * 10 ** DECIMALS) / 10 ** DECIMALS;
+      const roundUp   = (v) => Math.ceil(v * 10 ** DECIMALS) / 10 ** DECIMALS;
 
       chartInstance.current.setOption(
         {
           yAxis: [
-            { min: minLow - pad, max: maxHigh + pad, scale: true, gridIndex: 0 },
+            { min: roundDown(minLow - pad), max: roundUp(maxHigh + pad), scale: true, gridIndex: 0 },
             {} // keep volume axis unchanged
           ]
         },
@@ -114,10 +119,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     // or the length doesn't match the main price series, ECharts will still
     // render the points on the correct dates.
     const mlLine = mlForecast.map(item => [item.time, item.value]);
-    console.log('ml line')
-    console.log(mlLine)
     const analystLine = analystForecast.map(item => [item.time, item.value]);
-    const volumes = priceData.map(item => item.volume || 0);
+    
 
 
     const option = {
@@ -150,7 +153,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           }
 
 
-          if (volume) {
+          if (volume?.data != null) {
             text += `Volume: ${volume.data.toLocaleString()}<br/>`;
           }
 
@@ -231,13 +234,13 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
       dataZoom: [
         {
           type: 'inside',
-          xAxisIndex: 0,
+          xAxisIndex: [0,1],
           startValue: cutoffIndex,
           endValue: dates.length - 1
         },
         {
           type: 'slider',
-          xAxisIndex: 0,
+          xAxisIndex: [0,1],
           startValue: cutoffIndex,
           endValue: dates.length - 1,
           height: 22,

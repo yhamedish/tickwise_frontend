@@ -42,7 +42,6 @@ function addDays(dateLike, days) {
 function normalizeToISODate(value) {
   if (value == null) return "";
 
-  // Already a Date?
   if (value instanceof Date && !isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
   }
@@ -52,8 +51,13 @@ function normalizeToISODate(value) {
   // Numeric? (unix seconds or ms)
   if (/^\d+(\.\d+)?$/.test(s)) {
     const n = Number(s);
-    // heuristic: >= 1e12 is ms, otherwise seconds
-    const ms = n >= 1e12 ? n : n * 1000;
+
+    // Better heuristic:
+    // - seconds are ~1e9 today
+    // - milliseconds are ~1e12 today, but were <1e12 before Sep 2001
+    // - anything >= 1e11 is almost certainly ms (covers all ms since 1973)
+    const ms = n >= 1e11 ? n : n * 1000;
+
     const d = new Date(ms);
     return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
   }
@@ -61,9 +65,9 @@ function normalizeToISODate(value) {
   // ISO-ish string
   const d = new Date(s);
   if (isNaN(d.getTime())) return "";
-
   return d.toISOString().slice(0, 10);
 }
+
 
 function App() {
   const [expandedTicker, setExpandedTicker] = useState(null);
@@ -149,7 +153,9 @@ function App() {
         const formatted = Array.isArray(json)
           ? json.map(item => {
               const rawTime = item.date ?? item.Date ?? item.time ?? item.Time;
+              console.log(rawTime)
               const dateStr = normalizeToISODate(rawTime);
+              console.log(dateStr)
 
               return {
                 time: dateStr,
@@ -170,7 +176,8 @@ function App() {
     };
     fetchHistory();
   }, [expandedTicker, base, priceHistory]);
-
+  console.log('test')
+  console.log(priceHistory)
   // Partition the stocks into buys and sells based on the fetched list.
   const topBuys = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'buy');
   const topSells = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'sell');
@@ -324,7 +331,7 @@ function App() {
                       </tr>
                       {expandedTicker === stock.ticker && (
                         <tr>
-                          <td colSpan="7" className="p-4 bg-gray-50">
+                          <td colSpan="8" className="p-4 bg-gray-50">
                             <div className="mb-2 flex gap-4 text-sm text-gray-700">
                               <div className="flex items-center gap-2">
                                 <span className="w-3 h-3 bg-blue-500 inline-block rounded-full"></span>
@@ -345,7 +352,7 @@ function App() {
                               )}
                               analystForecast={generateForecastLine(
                                 priceHistory[stock.ticker] || [],
-                                stock.forecast1y
+                                stock.forecast1y*0.01
                               )}
                             />
                           </td>
