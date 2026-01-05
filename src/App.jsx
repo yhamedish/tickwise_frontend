@@ -8,23 +8,23 @@ import { BarChart2, ThumbsUp, MessageCircle, Activity } from 'lucide-react';
 // fields as the remote JSON: ticker, company, recommendation (Buy/Hold/Sell),
 // confidence, sentiment, technical, forecast1m, analysts_forecast.
 const dummyData = [
-  { ticker: 'AAPL', company: 'Apple Inc.', recommendation: 'Buy', confidence: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, analysts_forecast: 28 },
-  { ticker: 'TSLA', company: 'Tesla Inc.', recommendation: 'Hold', confidence: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, analysts_forecast: 12 },
-  { ticker: 'AMZN', company: 'Amazon.com Inc.', recommendation: 'Sell', confidence: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, analysts_forecast: 8 },
-  { ticker: 'MSFT', company: 'Microsoft Corp.', recommendation: 'Buy', confidence: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, analysts_forecast: 25 },
-  { ticker: 'NFLX', company: 'Netflix Inc.', recommendation: 'Sell', confidence: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, analysts_forecast: 10 }
+  { ticker: 'AAPL', company: 'Apple Inc.', recommendation: 'Buy', Tickwise: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, analysts_forecast: 28 },
+  { ticker: 'TSLA', company: 'Tesla Inc.', recommendation: 'Hold', Tickwise: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, analysts_forecast: 12 },
+  { ticker: 'AMZN', company: 'Amazon.com Inc.', recommendation: 'Sell', Tickwise: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, analysts_forecast: 8 },
+  { ticker: 'MSFT', company: 'Microsoft Corp.', recommendation: 'Buy', Tickwise: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, analysts_forecast: 25 },
+  { ticker: 'NFLX', company: 'Netflix Inc.', recommendation: 'Sell', Tickwise: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, analysts_forecast: 10 }
 ];
 
 // Helper to generate forecast lines for the chart. Takes the last close price and applies
 // a percentage change.
-function generateForecastLine(priceData, percentChange) {
+function generateForecastLine(priceData, percentChange, days) {
   if (!priceData || priceData.length === 0) return [];
   const lastTime = priceData[priceData.length - 1].time;
   const lastClose = priceData[priceData.length - 1].close;
   const forecastValue = lastClose * (1 + percentChange / 100);
   return [
     { time: lastTime, value: lastClose },
-    { time: addDays(lastTime, 30), value: forecastValue },
+    { time: addDays(lastTime, days), value: forecastValue },
   ];
 }
 
@@ -189,7 +189,7 @@ function App() {
     ? (
         stocksData
           .filter(s => s.recommendation?.toLowerCase() === 'buy')
-          .reduce((sum, s) => sum + (Number(s.confidence) || 0), 0) / buyCount
+          .reduce((sum, s) => sum + (Number(s.tickwise_score) || 0), 0) / buyCount
       ).toFixed(1)
     : '0.0';
 
@@ -320,7 +320,7 @@ function App() {
                       >
                         <td className="px-3 py-2 font-medium">{stock.ticker}</td>
                         <td className="px-3 py-2">{stock.company}</td>
-                        <td className="px-3 py-2">{stock.confidence}%</td>
+                        <td className="px-3 py-2">{stock.tickwise_score}%</td>
                         <td className="px-3 py-2">{(Number(stock.sentiment)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.technical)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.fundamental_score)).toFixed(1)}%</td>
@@ -347,11 +347,13 @@ function App() {
                               priceData={priceHistory[stock.ticker] || []}
                               mlForecast={generateForecastLine(
                                 priceHistory[stock.ticker] || [],
-                                (stock.forecast1m - stock.Close)*100/stock.Close
+                                (stock.forecast1m - stock.Close)*100/stock.Close,
+                                30
                               )}
                               analystForecast={generateForecastLine(
                                 priceHistory[stock.ticker] || [],
-                                stock.analysts_forecast
+                                stock.analysts_forecast,
+                                365
                               )}
                             />
                           </td>
@@ -380,7 +382,7 @@ function App() {
               <li><strong>Machine Learning Forecasts:</strong> A trained regression model predicts near-term and long-term performance based on historical data.</li>
             </ul>
             <p>
-              Confidence scores are calculated by weighting the alignment of news sentiment, technical strength, and model forecast.
+              Tickwise scores are calculated by weighting the alignment of news sentiment, technical strength, and model forecast.
             </p>
           </div>
         </details>

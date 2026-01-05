@@ -36,12 +36,12 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     // }
 
         // If you have a target future date in mlForecast (e.g., last+30d)
-    const future = mlForecast?.[mlForecast.length - 1]?.time; // 'YYYY-MM-DD'
+    const future_1m = mlForecast?.[mlForecast.length - 1]?.time; // 'YYYY-MM-DD'
     const future_ml_val = mlForecast?.[mlForecast.length - 1]?.value;
-    if (future) {
+    if (future_1m) {
       const last = dates[dates.length - 1]; // last candle date
       const d = new Date(last + 'T00:00:00');
-      const end = new Date(future + 'T00:00:00');
+      const end = new Date(future_1m + 'T00:00:00');
 
       // add each missing day as a category to create proportional spacing
       while (d < end) {
@@ -145,8 +145,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
             const v = Array.isArray(candle.value)
               ? candle.value
               : (Array.isArray(candle.data) ? candle.data : null);
-
-            if (v) {
+            console.log(v[1])
+            if (v[1] != null) {
               const [idx, open, close, low, high] = v;
               text += `Open: ${open}<br/>Close: ${close}<br/>Low: ${low}<br/>High: ${high}<br/>`;
             }
