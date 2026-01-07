@@ -8,11 +8,11 @@ import { BarChart2, ThumbsUp, MessageCircle, Activity } from 'lucide-react';
 // fields as the remote JSON: ticker, company, recommendation (Buy/Hold/Sell),
 // confidence, sentiment, technical, forecast1m, analysts_forecast.
 const dummyData = [
-  { ticker: 'AAPL', company: 'Apple Inc.', recommendation: 'Buy', Tickwise: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, analysts_forecast: 28 },
-  { ticker: 'TSLA', company: 'Tesla Inc.', recommendation: 'Hold', Tickwise: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, analysts_forecast: 12 },
-  { ticker: 'AMZN', company: 'Amazon.com Inc.', recommendation: 'Sell', Tickwise: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, analysts_forecast: 8 },
-  { ticker: 'MSFT', company: 'Microsoft Corp.', recommendation: 'Buy', Tickwise: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, analysts_forecast: 25 },
-  { ticker: 'NFLX', company: 'Netflix Inc.', recommendation: 'Sell', Tickwise: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, analysts_forecast: 10 }
+  { ticker: 'AAPL', Security: 'Apple Inc.', recommendation: 'Buy', Tickwise: 92, sentiment: 0.85, technical: 0.78, forecast1m: 5.3, analysts_forecast: 28 },
+  { ticker: 'TSLA', Security: 'Tesla Inc.', recommendation: 'Hold', Tickwise: 75, sentiment: 0.4, technical: 0.5, forecast1m: -0.2, analysts_forecast: 12 },
+  { ticker: 'AMZN', Security: 'Amazon.com Inc.', recommendation: 'Sell', Tickwise: 68, sentiment: -0.2, technical: 0.3, forecast1m: -3.1, analysts_forecast: 8 },
+  { ticker: 'MSFT', Security: 'Microsoft Corp.', recommendation: 'Buy', Tickwise: 88, sentiment: 0.7, technical: 0.9, forecast1m: 4.7, analysts_forecast: 25 },
+  { ticker: 'NFLX', Security: 'Netflix Inc.', recommendation: 'Sell', Tickwise: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, analysts_forecast: 10 }
 ];
 
 // Helper to generate forecast lines for the chart. Takes the last close price and applies
@@ -229,7 +229,7 @@ function App() {
               <ThumbsUp size={28} />
             </div>
             <div>
-              <div className="text-sm text-green-700">Avg Buy Confidence</div>
+              <div className="text-sm text-green-700">Avg Buy TickWise Score</div>
               <div className="text-2xl font-bold text-green-900">{avgBuyConfidence}%</div>
             </div>
           </div>
@@ -290,7 +290,7 @@ function App() {
             const term = searchTerm.toLowerCase();
             return (
               stock.ticker?.toLowerCase().includes(term) ||
-              stock.company?.toLowerCase().includes(term)
+              stock.Security?.toLowerCase().includes(term)
             );
           });
         return (
@@ -301,8 +301,8 @@ function App() {
                 <thead className="bg-gray-100">
                   <tr>
                     <th className="px-3 py-2">Ticker</th>
-                    <th className="px-3 py-2">Company</th>
-                    <th className="px-3 py-2">Confidence</th>
+                    <th className="px-3 py-2">Security</th>
+                    <th className="px-3 py-2">TickWise Score</th>
                     <th className="px-3 py-2">Sentiment</th>
                     <th className="px-3 py-2">Technical</th>
                     <th className="px-3 py-2">Fundamental</th>
@@ -319,7 +319,7 @@ function App() {
                         onClick={() => setExpandedTicker(expandedTicker === stock.ticker ? null : stock.ticker)}
                       >
                         <td className="px-3 py-2 font-medium">{stock.ticker}</td>
-                        <td className="px-3 py-2">{stock.company}</td>
+                        <td className="px-3 py-2">{stock.Security}</td>
                         <td className="px-3 py-2">{stock.tickwise_score}%</td>
                         <td className="px-3 py-2">{(Number(stock.sentiment)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.technical)).toFixed(1)}%</td>
