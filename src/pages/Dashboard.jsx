@@ -69,12 +69,58 @@ function normalizeToISODate(value) {
   return d.toISOString().slice(0, 10);
 }
 
+function sortRows(rows, sortConfig) {
+  if (!sortConfig.key) return rows;
+
+  const { key, direction } = sortConfig;
+  const multiplier = direction === 'asc' ? 1 : -1;
+
+  return [...rows].sort((a, b) => {
+    const va = Number(a[key]);
+    const vb = Number(b[key]);
+
+    if (isNaN(va) || isNaN(vb)) return 0;
+    return (va - vb) * multiplier;
+  });
+}
+
+function SortableTH({ label, sortKey, sortConfig, setSortConfig }) {
+  const isActive = sortConfig.key === sortKey;
+
+  return (
+    <th
+      className="px-3 py-2 cursor-pointer select-none hover:bg-gray-200"
+      onClick={() =>
+        setSortConfig(prev => ({
+          key: sortKey,
+          direction:
+            prev.key === sortKey && prev.direction === 'desc' ? 'asc' : 'desc',
+        }))
+      }
+    >
+      {label}
+      {isActive && (
+        <span className="ml-1 text-xs">
+          {sortConfig.direction === 'asc' ? '▲' : '▼'}
+        </span>
+      )}
+    </th>
+  );
+}
+
+
 
 export default function Dashboard() {
   const [expandedTicker, setExpandedTicker] = useState(null);
   // Holds fetched historical price data for each ticker. When a user expands a row
   // we fetch the corresponding JSON from Azure Blob Storage using the container SAS URL.
   const [priceHistory, setPriceHistory] = useState({});
+
+  const [sortConfig, setSortConfig] = useState({
+    key: null,
+    direction: 'desc', // 'asc' | 'desc'
+    });
+
 
   // Holds the list of stocks loaded from the top stocks JSON. This replaces
   // the hard-coded dummyData when successfully loaded.
@@ -282,36 +328,84 @@ export default function Dashboard() {
 
       {/* Render top buy and sell lists */}
       {[{ title: 'Top Buy Stocks', stocks: topBuys }, { title: 'Top Sell Stocks', stocks: topSells }].map(({ title, stocks }) => {
-        const filtered = stocks
-          .filter(stock => {
+        const filtered = sortRows(
+        stocks
+            .filter(stock => {
             if (!filterType) return true;
             return stock.recommendation?.toLowerCase() === filterType;
-          })
-          .filter(stock => {
+            })
+            .filter(stock => {
             const term = searchTerm.toLowerCase();
             return (
-              stock.ticker?.toLowerCase().includes(term) ||
-              stock.Security?.toLowerCase().includes(term)
+                stock.ticker?.toLowerCase().includes(term) ||
+                stock.Security?.toLowerCase().includes(term)
             );
-          });
+            }),
+        sortConfig
+        );
+
         return (
           <div key={title} className="mb-10">
             <h2 className="text-xl font-semibold mb-4">{title}</h2>
             <div className="bg-white rounded shadow overflow-x-auto">
               <table className={`min-w-full text-sm text-left ${title === 'Top Buy Stocks' ? 'buy-table' : title === 'Top Sell Stocks' ? 'sell-table' : ''}`}>
                 <thead className="bg-gray-100">
-                  <tr>
+                <tr>
                     <th className="px-3 py-2">Ticker</th>
                     <th className="px-3 py-2">Security</th>
-                    <th className="px-3 py-2">TickWise Score</th>
-                    <th className="px-3 py-2">Sentiment</th>
-                    <th className="px-3 py-2">Technical</th>
-                    <th className="px-3 py-2">Fundamental</th>
-                    <th className="px-3 py-2">AI 1M Upper %</th>
-                    <th className="px-3 py-2">AI 1M Lower %</th>
-                    <th className="px-3 py-2">Analysts 1Y Forecast %</th>
-                  </tr>
+
+                    <SortableTH
+                    label="TickWise Score"
+                    sortKey="tickwise_score"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                    <SortableTH
+                    label="Sentiment"
+                    sortKey="sentiment"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                    <SortableTH
+                    label="Technical"
+                    sortKey="technical"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                    <SortableTH
+                    label="Fundamental"
+                    sortKey="fundamental_score"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                    <SortableTH
+                    label="AI 1M Upper %"
+                    sortKey="forecast1m_p95"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                    <SortableTH
+                    label="AI 1M Lower %"
+                    sortKey="forecast1m_p5"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                    <SortableTH
+                    label="Analysts 1Y %"
+                    sortKey="analysts_forecast"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    />
+
+                </tr>
                 </thead>
+
                 <tbody>
                   {filtered.map((stock, idx) => (
                     <React.Fragment key={idx}>
@@ -321,7 +415,7 @@ export default function Dashboard() {
                       >
                         <td className="px-3 py-2 font-medium">{stock.ticker}</td>
                         <td className="px-3 py-2">{stock.Security}</td>
-                        <td className="px-3 py-2">{stock.tickwise_score}%</td>
+                        <td className="px-3 py-2">{stock.tickwise_score.toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.sentiment)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.technical)).toFixed(1)}%</td>
                         <td className="px-3 py-2">{(Number(stock.fundamental_score)).toFixed(1)}%</td>
