@@ -430,7 +430,7 @@ export default function Landing() {
         <div className="rounded-3xl border border-slate-200 bg-white/70 backdrop-blur p-8 shadow-sm">
           <div className="flex items-center gap-3">
             <ShieldCheck className="text-slate-900" size={22} />
-            <h2 className="text-xl md:text-2xl font-bold tracking-tight">How it works</h2>
+            <h2 className="text-xl md:text-2xl font-bold tracking-tight">How Tickwise works</h2>
           </div>
 
           <div className="mt-6 grid md:grid-cols-3 gap-6">

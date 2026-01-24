@@ -251,11 +251,22 @@ export default function Dashboard() {
   const [filterType, setFilterType] = useState('');
 
   return (
-    <div className="min-h-screen bg-gray-100 text-gray-900 p-6">
+    <main className="min-h-screen bg-gray-100 text-gray-900 p-6">
       {loadingStocks && (
         <p className="text-center text-gray-600 mb-4">Loading stock recommendations...</p>
       )}
-      <h1 className="text-2xl font-bold mb-6">AI Stock Recommendations</h1>
+      <section className="mb-6">
+        <h1 className="text-2xl font-bold mb-2">
+          AI-Powered Stock Picks and Buy/Sell Signals
+        </h1>
+        <p className="text-gray-700">
+          TickWise is an AI-powered stock analysis platform that helps investors identify
+          high-confidence buy and sell opportunities. It combines technical indicators,
+          fundamental analysis, and machine-learning forecasts to rank stocks daily.
+        </p>
+      </section>
+
+      
 
       {/* Statistic cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -476,6 +487,7 @@ export default function Dashboard() {
               <li><strong>Technical Indicators:</strong> Price patterns and trends are quantified using technical signals like momentum, RSI, and moving averages.</li>
               <li><strong>Machine Learning Forecasts:</strong> A trained regression model predicts near-term and long-term performance based on historical data.</li>
             </ul>
+            <h2>How These Stock Picks Are Generated</h2>
             <p>
               Tickwise scores are calculated by weighting the alignment of news sentiment, technical strength, and model forecast.
             </p>
@@ -483,6 +495,8 @@ export default function Dashboard() {
         </details>
       </div>
       <footer className="text-center text-sm text-gray-500 mt-10">© {new Date().getFullYear()} AI Stock Picks</footer>
-    </div>
+    </main>
   );
 }
+
+
