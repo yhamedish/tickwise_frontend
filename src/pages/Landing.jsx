@@ -176,7 +176,7 @@ export default function Landing() {
             </a>
 
             <button
-              onClick={() => navigate('/picks')}
+              onClick={() => navigate('/picks/')}
               className="bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
             >
               View Today’s Picks
@@ -185,7 +185,7 @@ export default function Landing() {
 
           {/* Mobile CTA */}
           <button
-            onClick={() => navigate('/picks')}
+            onClick={() => navigate('/picks/')}
             className="md:hidden bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
           >
             Picks
@@ -214,7 +214,7 @@ export default function Landing() {
 
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
           <button
-            onClick={() => navigate('/picks')}
+            onClick={() => navigate('/picks/')}
             className="w-full sm:w-auto bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 inline-flex items-center justify-center gap-2"
           >
             View Today’s Picks <ArrowRight size={18} />
@@ -456,7 +456,7 @@ export default function Landing() {
               The goal is clarity: fewer noisy indicators, more decision-ready signals.
             </div>
             <button
-              onClick={() => navigate('/picks')}
+              onClick={() => navigate('/picks/')}
               className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-800 transition inline-flex items-center gap-2"
             >
               Explore the dashboard <ArrowRight size={18} />
@@ -486,7 +486,7 @@ export default function Landing() {
             </div>
 
             <button
-              onClick={() => navigate('/picks')}
+              onClick={() => navigate('/picks/')}
               className="bg-white text-slate-900 px-6 py-3 rounded-xl font-semibold hover:bg-slate-100 transition inline-flex items-center gap-2"
             >
               View Today’s Picks <ArrowRight size={18} />
