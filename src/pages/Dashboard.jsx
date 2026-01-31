@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { List } from 'react-window';
 import StockChart from '../StockChart';
 import '../index.css';
 import { BarChart2, ThumbsUp, MessageCircle, Activity } from 'lucide-react';
@@ -84,6 +85,108 @@ function sortRows(rows, sortConfig) {
   });
 }
 
+function toNumber(value) {
+  const n = Number(value);
+  return isNaN(n) ? null : n;
+}
+
+function buildScoreRanges(rows) {
+  const ranges = {
+    tickwise_score: { min: null, max: null },
+    sentiment: { min: null, max: null },
+    technical: { min: null, max: null },
+    fundamental_score: { min: null, max: null },
+    ai1m_lower_pct: { min: null, max: null },
+    ai1m_upper_pct: { min: null, max: null },
+    analyst_1y_pct: { min: null, max: null },
+  };
+
+  rows.forEach(row => {
+    Object.keys(ranges).forEach(key => {
+      const val = toNumber(row[key]);
+      if (val == null) return;
+      if (ranges[key].min == null || val < ranges[key].min) ranges[key].min = val;
+      if (ranges[key].max == null || val > ranges[key].max) ranges[key].max = val;
+    });
+  });
+
+  return ranges;
+}
+
+function withinRange(value, range) {
+  if (range.min != null && value < range.min) return false;
+  if (range.max != null && value > range.max) return false;
+  return true;
+}
+
+function getHistoryPointsForTicker(histData, ticker) {
+  if (!histData) return [];
+  const points = [];
+
+  const pushPoint = (dateValue, forecastValue) => {
+    const time = addDays(dateValue, 30);
+    const value = Number(forecastValue);
+    if (!time || isNaN(value)) return;
+    points.push({ time, value });
+  };
+
+  const scanEntry = (entry, parentDate) => {
+    if (!entry || typeof entry !== 'object') return;
+    const entryDate =
+      parentDate ??
+      entry.analysis_date ??
+      entry.Date_y ??
+      entry.Date_x ??
+      entry.date ??
+      entry.Date ??
+      entry.run_date ??
+      entry.as_of ??
+      entry.generated_at ??
+      entry.time;
+
+    if (Array.isArray(entry.recommendations)) {
+      entry.recommendations.forEach(row => {
+        if (row?.ticker !== ticker) return;
+        pushPoint(row.date ?? entryDate, row.forecast1m ?? row.forecast_1m ?? row.ml_forecast_1m ?? row.prediction_1m);
+      });
+      return;
+    }
+
+    if (Array.isArray(entry.stocks)) {
+      entry.stocks.forEach(row => {
+        if (row?.ticker !== ticker) return;
+        pushPoint(row.date ?? entryDate, row.forecast1m ?? row.forecast_1m ?? row.ml_forecast_1m ?? row.prediction_1m);
+      });
+      return;
+    }
+
+    if (entry.ticker === ticker) {
+      pushPoint(
+        entryDate,
+        entry.forecast1m ??
+          entry.forecast_1m ??
+          entry.ml_forecast_1m ??
+          entry.prediction_1m
+      );
+    }
+  };
+
+  if (Array.isArray(histData)) {
+    histData.forEach(entry => scanEntry(entry, null));
+  } else if (typeof histData === 'object') {
+    if (Array.isArray(histData[ticker])) {
+      histData[ticker].forEach(entry => scanEntry(entry, entry.date ?? entry.Date ?? entry.run_date ?? entry.as_of));
+    } else {
+      Object.keys(histData).forEach(key => {
+        const entry = histData[key];
+        scanEntry(entry, key);
+      });
+    }
+  }
+
+  return points.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+}
+
 function SortableTH({ label, sortKey, sortConfig, setSortConfig }) {
   const isActive = sortConfig.key === sortKey;
 
@@ -108,10 +211,36 @@ function SortableTH({ label, sortKey, sortConfig, setSortConfig }) {
   );
 }
 
+function SortableHeader({ label, sortKey, sortConfig, setSortConfig }) {
+  const isActive = sortConfig.key === sortKey;
+
+  return (
+    <div
+      className="px-3 py-2 cursor-pointer select-none hover:bg-gray-200 flex items-center"
+      onClick={() =>
+        setSortConfig(prev => ({
+          key: sortKey,
+          direction:
+            prev.key === sortKey && prev.direction === 'desc' ? 'asc' : 'desc',
+        }))
+      }
+      role="button"
+      tabIndex={0}
+    >
+      <span>{label}</span>
+      {isActive && (
+        <span className="ml-1 text-xs">
+          {sortConfig.direction === 'asc' ? '^' : 'v'}
+        </span>
+      )}
+    </div>
+  );
+}
+
 
 
 export default function Dashboard() {
-  const [expandedTicker, setExpandedTicker] = useState(null);
+  const [selectedTicker, setSelectedTicker] = useState(null);
   // Holds fetched historical price data for each ticker. When a user expands a row
   // we fetch the corresponding JSON from Azure Blob Storage using the container SAS URL.
   const [priceHistory, setPriceHistory] = useState({});
@@ -127,6 +256,8 @@ export default function Dashboard() {
   const [stocksData, setStocksData] = useState([]);
   const [loadingStocks, setLoadingStocks] = useState(true);
   const [stocksError, setStocksError] = useState(null);
+  const [histData, setHistData] = useState([]);
+  const [loadingHist, setLoadingHist] = useState(true);
 
   // Environment variable for the container SAS URL. Should look like
   // "https://<account>.blob.core.windows.net/<container>?<sas>".
@@ -137,6 +268,7 @@ export default function Dashboard() {
 
   const base = import.meta.env.VITE_GCS_PUBLIC_BASE;
   const scoresUrl = `${base}/today_recommendations.json`;
+  const histUrl = `${base}/hist_recommendations.json`;
   // Load top stocks once on mount. If not available or fails, fall back to dummy data.
   useEffect(() => {
     const fetchStocks = async () => {
@@ -169,10 +301,34 @@ export default function Dashboard() {
     fetchStocks();
   }, [scoresUrl]);
 
+  useEffect(() => {
+    const fetchHistory = async () => {
+      if (!histUrl) {
+        setHistData([]);
+        setLoadingHist(false);
+        return;
+      }
+      try {
+        const response = await fetch(histUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch history data: ${response.status} ${response.statusText}`);
+        }
+        const json = await response.json();
+        setHistData(Array.isArray(json) ? json : json ?? []);
+      } catch (err) {
+        console.error('Error fetching history JSON:', err);
+        setHistData([]);
+      } finally {
+        setLoadingHist(false);
+      }
+    };
+    fetchHistory();
+  }, [histUrl]);
+
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
-    if (!expandedTicker) return;
-    if (priceHistory[expandedTicker]) return;
+    if (!selectedTicker) return;
+    if (priceHistory[selectedTicker]) return;
     if (!base) {
       console.warn('VITE_CONTAINER_SAS_URL is not set. Cannot fetch price history.');
       return;
@@ -183,12 +339,12 @@ export default function Dashboard() {
         // before the SAS to form the correct URL. This avoids placing the path
         // after the query string, which would result in authentication errors.
         // const [baseUrl, sasParams] = containerSasUrl.split('?');
-        // const blobPath = `stocks/${expandedTicker}.json`;
+        // const blobPath = `stocks/${selectedTicker}.json`;
         // const blobUrl = sasParams
         //   ? `${baseUrl.replace(/\/$/, '')}/${blobPath}?${sasParams}`
         //   : `${baseUrl.replace(/\/$/, '')}/${blobPath}`;
         // const response = await fetch(blobUrl);
-        const historyUrl = `${base}/data/${expandedTicker}.json`;
+        const historyUrl = `${base}/data/${selectedTicker}.json`;
         const response = await fetch(historyUrl);
 
         if (!response.ok) {
@@ -215,17 +371,14 @@ export default function Dashboard() {
             }).filter(r => r.time) // drop rows that didn't parse
           : [];
 
-        setPriceHistory(prev => ({ ...prev, [expandedTicker]: formatted }));
+        setPriceHistory(prev => ({ ...prev, [selectedTicker]: formatted }));
         
       } catch (err) {
         console.error('Error loading price history:', err);
       }
     };
     fetchHistory();
-  }, [expandedTicker, base, priceHistory]);
-  // Partition the stocks into buys and sells based on the fetched list.
-  const topBuys = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'buy');
-  const topSells = stocksData.filter(stock => stock.recommendation?.toLowerCase() === 'sell');
+  }, [selectedTicker, base, priceHistory]);
   // Compute statistics for the summary cards.
   const totalAnalyzed = stocksData.length;
   const buyCount = stocksData.filter(s => s.recommendation?.toLowerCase() === 'buy').length;
@@ -249,17 +402,130 @@ export default function Dashboard() {
   // Search and filter state.
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [showFilters, setShowFilters] = useState(true);
+  const [scoreFilters, setScoreFilters] = useState({
+    tickwise_score: { min: '', max: '' },
+    sentiment: { min: '', max: '' },
+    technical: { min: '', max: '' },
+    fundamental_score: { min: '', max: '' },
+    ai1m_lower_pct: { min: '', max: '' },
+    ai1m_upper_pct: { min: '', max: '' },
+    analyst_1y_pct: { min: '', max: '' },
+  });
+
+  const rows = stocksData.map(stock => {
+    const close = Number(stock.Close) || 0;
+    const ai1mLowerPct = close ? ((Number(stock.forecast1m_p5) - close) * 100) / close : 0;
+    const ai1mUpperPct = close ? ((Number(stock.forecast1m_p95) - close) * 100) / close : 0;
+    const analyst1yPct = close ? ((Number(stock.analysts_forecast) - close) * 100) / close : 0;
+
+    return {
+      ...stock,
+      tickwise_score: Number(stock.tickwise_score),
+      sentiment: Number(stock.sentiment),
+      technical: Number(stock.technical),
+      fundamental_score: Number(stock.fundamental_score),
+      ai1m_lower_pct: ai1mLowerPct,
+      ai1m_upper_pct: ai1mUpperPct,
+      analyst_1y_pct: analyst1yPct,
+    };
+  });
+
+  const scoreRanges = buildScoreRanges(rows);
+
+  const filteredRows = sortRows(
+    rows
+      .filter(stock => {
+        if (!filterType) return true;
+        return stock.recommendation?.toLowerCase() === filterType;
+      })
+      .filter(stock => {
+        const term = searchTerm.toLowerCase();
+        return (
+          stock.ticker?.toLowerCase().includes(term) ||
+          stock.Security?.toLowerCase().includes(term)
+        );
+      })
+      .filter(stock => {
+        const checks = Object.keys(scoreFilters).map(key => {
+          const val = toNumber(stock[key]);
+          if (val == null) return true;
+          const min = scoreFilters[key].min === '' ? null : Number(scoreFilters[key].min);
+          const max = scoreFilters[key].max === '' ? null : Number(scoreFilters[key].max);
+          return withinRange(val, { min, max });
+        });
+        return checks.every(Boolean);
+      }),
+    sortConfig
+  );
+
+  const selectedStock = rows.find(row => row.ticker === selectedTicker);
+  const historicalMlPoints = selectedTicker
+    ? getHistoryPointsForTicker(histData, selectedTicker)
+    : [];
+  const rowHeight = 40;
+  const listHeight = 240;
+  const gridTemplate = '90px 220px repeat(7, minmax(110px, 1fr))';
+
+  const Row = ({ index, style }) => {
+    const stock = filteredRows[index];
+    if (!stock) return null;
+    const isSelected = stock.ticker === selectedTicker;
+    const isStriped = index % 2 === 1;
+
+    return (
+      <div
+        style={{ ...style, display: 'grid', gridTemplateColumns: gridTemplate }}
+        className={`border-b border-slate-200 items-center text-sm cursor-pointer hover:bg-slate-50 ${isSelected ? 'bg-cyan-50 border-l-4 border-cyan-400' : isStriped ? 'bg-slate-50/60' : 'bg-white'}`}
+        onClick={() => setSelectedTicker(stock.ticker)}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="px-3 py-2 font-medium">{stock.ticker}</div>
+        <div className="px-3 py-2">{stock.Security}</div>
+        <div className="px-3 py-2">{Number(stock.tickwise_score).toFixed(1)}%</div>
+        <div className="px-3 py-2">{Number(stock.sentiment).toFixed(1)}%</div>
+        <div className="px-3 py-2">{Number(stock.technical).toFixed(1)}%</div>
+        <div className="px-3 py-2">{Number(stock.fundamental_score).toFixed(1)}%</div>
+        <div className="px-3 py-2">{Number(stock.ai1m_upper_pct).toFixed(1)}</div>
+        <div className="px-3 py-2">{Number(stock.ai1m_lower_pct).toFixed(1)}</div>
+        <div className="px-3 py-2">{Number(stock.analyst_1y_pct).toFixed(1)}</div>
+      </div>
+    );
+  };
+
+  const onFilterChange = (key, bound, value) => {
+    setScoreFilters(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        [bound]: value,
+      },
+    }));
+  };
+
+  const resetScoreFilters = () => {
+    setScoreFilters({
+      tickwise_score: { min: '', max: '' },
+      sentiment: { min: '', max: '' },
+      technical: { min: '', max: '' },
+      fundamental_score: { min: '', max: '' },
+      ai1m_lower_pct: { min: '', max: '' },
+      ai1m_upper_pct: { min: '', max: '' },
+      analyst_1y_pct: { min: '', max: '' },
+    });
+  };
 
   return (
-    <main className="min-h-screen bg-gray-100 text-gray-900 p-6">
+    <main className="min-h-screen bg-gradient-to-b from-slate-50 via-slate-50 to-cyan-50 text-slate-900 p-6">
       {loadingStocks && (
         <p className="text-center text-gray-600 mb-4">Loading stock recommendations...</p>
       )}
       <section className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">
+        <h1 className="text-2xl font-semibold text-slate-900 mb-2">
           AI-Powered Stock Picks and Buy/Sell Signals
         </h1>
-        <p className="text-gray-700">
+        <p className="text-slate-600 max-w-3xl">
           TickWise is an AI-powered stock analysis platform that helps investors identify
           high-confidence buy and sell opportunities. It combines technical indicators,
           fundamental analysis, and machine-learning forecasts to rank stocks daily.
@@ -270,215 +536,251 @@ export default function Dashboard() {
 
       {/* Statistic cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-blue-50 border-l-4 border-blue-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300">
+        <div className="bg-white/90 border border-slate-200 border-l-4 border-cyan-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
           <div className="flex items-center gap-4">
-            <div className="text-blue-600">
+            <div className="text-cyan-600">
               <BarChart2 size={28} />
             </div>
             <div>
-              <div className="text-sm text-blue-700">Stocks Analyzed</div>
-              <div className="text-2xl font-bold text-blue-900">{totalAnalyzed}</div>
+              <div className="text-sm text-slate-600">Stocks Analyzed</div>
+              <div className="text-2xl font-semibold text-slate-900">{totalAnalyzed}</div>
             </div>
           </div>
         </div>
-        <div className="bg-green-50 border-l-4 border-green-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300">
+        <div className="bg-white/90 border border-slate-200 border-l-4 border-emerald-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
           <div className="flex items-center gap-4">
-            <div className="text-green-600">
+            <div className="text-emerald-600">
               <ThumbsUp size={28} />
             </div>
             <div>
-              <div className="text-sm text-green-700">Avg Buy TickWise Score</div>
-              <div className="text-2xl font-bold text-green-900">{avgBuyConfidence}%</div>
+              <div className="text-sm text-slate-600">Avg Buy TickWise Score</div>
+              <div className="text-2xl font-semibold text-slate-900">{avgBuyConfidence}%</div>
             </div>
           </div>
         </div>
-        <div className="bg-yellow-50 border-l-4 border-yellow-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300">
+        <div className="bg-white/90 border border-slate-200 border-l-4 border-amber-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
           <div className="flex items-center gap-4">
-            <div className="text-yellow-600">
+            <div className="text-amber-600">
               <MessageCircle size={28} />
             </div>
             <div>
-              <div className="text-sm text-yellow-700">Net Sentiment</div>
-              <div className="text-2xl font-bold text-yellow-900">{avgSentiment > 0 ? '+' : ''}{avgSentiment}</div>
+              <div className="text-sm text-slate-600">Net Sentiment</div>
+              <div className="text-2xl font-semibold text-slate-900">{avgSentiment > 0 ? '+' : ''}{avgSentiment}</div>
             </div>
           </div>
         </div>
-        <div className="bg-red-50 border-l-4 border-red-400 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300">
+        <div className="bg-white/90 border border-slate-200 border-l-4 border-rose-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
           <div className="flex items-center gap-4">
-            <div className="text-red-600">
+            <div className="text-rose-600">
               <Activity size={28} />
             </div>
             <div>
-              <div className="text-sm text-red-700">Buy / Hold / Sell</div>
-              <div className="text-2xl font-bold text-red-900">{buyCount} / {holdCount} / {sellCount}</div>
+              <div className="text-sm text-slate-600">Buy / Hold / Sell</div>
+              <div className="text-2xl font-semibold text-slate-900">{buyCount} / {holdCount} / {sellCount}</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Search and filter controls */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6 gap-4">
-        <input
-          type="text"
-          placeholder="Search ticker or name..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 w-full md:w-1/3 focus:outline-none focus:ring-2 focus:ring-blue-400"
-        />
-        <select
-          value={filterType}
-          onChange={(e) => setFilterType(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 w-full md:w-48 focus:outline-none focus:ring-2 focus:ring-blue-400"
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm text-slate-600">
+          Filters {showFilters ? 'visible' : 'hidden'}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowFilters(prev => !prev)}
+          className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
         >
-          <option value="">All Ratings</option>
-          <option value="buy">Buy</option>
-          <option value="hold">Hold</option>
-          <option value="sell">Sell</option>
-        </select>
+          {showFilters ? 'Hide filters' : 'Show filters'}
+        </button>
       </div>
 
-      {/* Render top buy and sell lists */}
-      {[{ title: 'Top Buy Stocks', stocks: topBuys }, { title: 'Top Sell Stocks', stocks: topSells }].map(({ title, stocks }) => {
-        const filtered = sortRows(
-        stocks
-            .filter(stock => {
-            if (!filterType) return true;
-            return stock.recommendation?.toLowerCase() === filterType;
-            })
-            .filter(stock => {
-            const term = searchTerm.toLowerCase();
-            return (
-                stock.ticker?.toLowerCase().includes(term) ||
-                stock.Security?.toLowerCase().includes(term)
-            );
-            }),
-        sortConfig
-        );
+      {/* Search and filter controls */}
+      {showFilters && (
+        <div className="bg-white/90 border border-slate-200 rounded shadow-sm p-4 mb-6 backdrop-blur">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          <input
+            type="text"
+            placeholder="Search ticker or name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="border border-slate-300 rounded-lg px-4 py-2 w-full lg:w-1/3 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+          />
+          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="border border-slate-300 rounded-lg px-4 py-2 w-full sm:w-48 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+            >
+              <option value="">All Ratings</option>
+              <option value="buy">Buy</option>
+              <option value="hold">Hold</option>
+              <option value="sell">Sell</option>
+            </select>
+            <button
+              type="button"
+              onClick={resetScoreFilters}
+              className="border border-slate-300 rounded-lg px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Reset score filters
+            </button>
+          </div>
+        </div>
 
-        return (
-          <div key={title} className="mb-10">
-            <h2 className="text-xl font-semibold mb-4">{title}</h2>
-            <div className="bg-white rounded shadow overflow-x-auto">
-              <table className={`min-w-full text-sm text-left ${title === 'Top Buy Stocks' ? 'buy-table' : title === 'Top Sell Stocks' ? 'sell-table' : ''}`}>
-                <thead className="bg-gray-100">
-                <tr>
-                    <th className="px-3 py-2">Ticker</th>
-                    <th className="px-3 py-2">Security</th>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+          {[
+            { key: 'tickwise_score', label: 'TickWise Score' },
+            { key: 'sentiment', label: 'Sentiment' },
+            { key: 'technical', label: 'Technical' },
+            { key: 'fundamental_score', label: 'Fundamental' },
+            { key: 'ai1m_lower_pct', label: 'AI 1M Lower %' },
+            { key: 'ai1m_upper_pct', label: 'AI 1M Upper %' },
+            { key: 'analyst_1y_pct', label: 'Analysts 1Y %' },
+          ].map(item => (
+            <div key={item.key} className="border border-slate-200 rounded-lg p-3 bg-white">
+              <div className="text-xs text-slate-500 mb-2">{item.label}</div>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  placeholder={scoreRanges[item.key].min == null ? 'Min' : `Min ${scoreRanges[item.key].min.toFixed(1)}`}
+                  value={scoreFilters[item.key].min}
+                  onChange={(e) => onFilterChange(item.key, 'min', e.target.value)}
+                  className="border border-slate-300 rounded-md px-2 py-1 w-1/2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                />
+                <input
+                  type="number"
+                  placeholder={scoreRanges[item.key].max == null ? 'Max' : `Max ${scoreRanges[item.key].max.toFixed(1)}`}
+                  value={scoreFilters[item.key].max}
+                  onChange={(e) => onFilterChange(item.key, 'max', e.target.value)}
+                  className="border border-slate-300 rounded-md px-2 py-1 w-1/2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                />
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center text-sm text-slate-600">
+            Showing {filteredRows.length} of {rows.length}
+          </div>
+        </div>
+      </div>
+      )}
 
-                    <SortableTH
-                    label="TickWise Score"
-                    sortKey="tickwise_score"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
+      {/* Render all stocks */}
+      <div className="mb-10">
+        <h2 className="text-xl font-semibold mb-4">All Stocks</h2>
+        <div className="bg-white rounded shadow-sm border border-slate-200 overflow-hidden">
+          <div
+            className="bg-slate-100 border-b border-slate-200 text-sm text-slate-700"
+            style={{ display: 'grid', gridTemplateColumns: gridTemplate }}
+          >
+            <div className="px-3 py-2 font-medium">Ticker</div>
+            <div className="px-3 py-2 font-medium">Security</div>
+            <SortableHeader
+              label="TickWise Score"
+              sortKey="tickwise_score"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+            <SortableHeader
+              label="Sentiment"
+              sortKey="sentiment"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+            <SortableHeader
+              label="Technical"
+              sortKey="technical"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+            <SortableHeader
+              label="Fundamental"
+              sortKey="fundamental_score"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+            <SortableHeader
+              label="AI 1M Upper %"
+              sortKey="ai1m_upper_pct"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+            <SortableHeader
+              label="AI 1M Lower %"
+              sortKey="ai1m_lower_pct"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+            <SortableHeader
+              label="Analysts 1Y %"
+              sortKey="analyst_1y_pct"
+              sortConfig={sortConfig}
+              setSortConfig={setSortConfig}
+            />
+          </div>
 
-                    <SortableTH
-                    label="Sentiment"
-                    sortKey="sentiment"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
-
-                    <SortableTH
-                    label="Technical"
-                    sortKey="technical"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
-
-                    <SortableTH
-                    label="Fundamental"
-                    sortKey="fundamental_score"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
-
-                    <SortableTH
-                    label="AI 1M Upper %"
-                    sortKey="forecast1m_p95"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
-
-                    <SortableTH
-                    label="AI 1M Lower %"
-                    sortKey="forecast1m_p5"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
-
-                    <SortableTH
-                    label="Analysts 1Y %"
-                    sortKey="analysts_forecast"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    />
-
-                </tr>
-                </thead>
-
-                <tbody>
-                  {filtered.map((stock, idx) => (
-                    <React.Fragment key={idx}>
-                      <tr
-                        className="cursor-pointer hover:bg-gray-50"
-                        onClick={() => setExpandedTicker(expandedTicker === stock.ticker ? null : stock.ticker)}
-                      >
-                        <td className="px-3 py-2 font-medium">{stock.ticker}</td>
-                        <td className="px-3 py-2">{stock.Security}</td>
-                        <td className="px-3 py-2">{stock.tickwise_score.toFixed(1)}%</td>
-                        <td className="px-3 py-2">{(Number(stock.sentiment)).toFixed(1)}%</td>
-                        <td className="px-3 py-2">{(Number(stock.technical)).toFixed(1)}%</td>
-                        <td className="px-3 py-2">{(Number(stock.fundamental_score)).toFixed(1)}%</td>
-                        <td className="px-3 py-2">{Number((stock.forecast1m_p5 - stock.Close)*100/stock.Close).toFixed(1)}</td>
-                        <td className="px-3 py-2">{Number((stock.forecast1m_p95 - stock.Close)*100/stock.Close).toFixed(1)}</td>
-                        <td className="px-3 py-2">{Number((stock.analysts_forecast - stock.Close)*100/stock.Close).toFixed(1)}</td>
-                      </tr>
-                      {expandedTicker === stock.ticker && (
-                        <tr>
-                          <td colSpan="8" className="p-4 bg-gray-50">
-                            <div className="mb-2 flex gap-4 text-sm text-gray-700">
-                              <div className="flex items-center gap-2">
-                                <span className="w-3 h-3 bg-blue-500 inline-block rounded-full"></span>
-                                ML Forecast
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="w-3 h-3 bg-orange-400 inline-block rounded-full"></span>
-                                Analyst Forecast
-                              </div>
-                            </div>
-                            
-                            <StockChart
-                              ticker={stock.ticker}
-                              priceData={priceHistory[stock.ticker] || []}
-                              mlForecast={generateForecastLine(
-                                priceHistory[stock.ticker] || [],
-                                (stock.forecast1m - stock.Close)*100/stock.Close,
-                                30
-                              )}
-                              analystForecast={generateForecastLine(
-                                priceHistory[stock.ticker] || [],
-                                stock.analysts_forecast,
-                                365
-                              )}
-                            />
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
+          <div className="overflow-auto">
+            {filteredRows.length === 0 ? (
+              <div className="p-6 text-sm text-slate-600">No stocks match the current filters.</div>
+            ) : (
+              <List
+                rowCount={filteredRows.length}
+                rowHeight={rowHeight}
+                rowComponent={Row}
+                rowProps={{}}
+                style={{ height: listHeight, width: '100%' }}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+      {selectedStock && (
+        <div className="mb-10 bg-white/95 rounded shadow-sm border border-slate-200 p-4 backdrop-blur">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-lg font-semibold">
+              {selectedStock.ticker} Forecast Detail
+            </div>
+            <button
+              type="button"
+              className="text-sm text-slate-600 hover:text-slate-900"
+              onClick={() => setSelectedTicker(null)}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="mb-2 flex gap-4 text-sm text-slate-700">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-blue-500 inline-block rounded-full"></span>
+              ML Forecast
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-orange-400 inline-block rounded-full"></span>
+              Analyst Forecast
             </div>
           </div>
-        );
-      })}
-      <div className="mb-6 bg-white rounded shadow p-4">
+          
+          <StockChart
+            ticker={selectedStock.ticker}
+            priceData={priceHistory[selectedStock.ticker] || []}
+            mlForecast={generateForecastLine(
+              priceHistory[selectedStock.ticker] || [],
+              (selectedStock.forecast1m - selectedStock.Close) * 100 / selectedStock.Close,
+              30
+            )}
+            mlHistory={historicalMlPoints}
+            analystForecast={generateForecastLine(
+              priceHistory[selectedStock.ticker] || [],
+              selectedStock.analysts_forecast,
+              365
+            )}
+          />
+        </div>
+      )}
+      <div className="mb-6 bg-white rounded shadow-sm border border-slate-200 p-4">
         <details>
-          <summary className="cursor-pointer text-lg font-semibold text-blue-600 mb-2">
+          <summary className="cursor-pointer text-lg font-semibold text-cyan-700 mb-2">
             How These Stock Recommendations Are Generated
           </summary>
-          <div className="mt-2 text-sm text-gray-700 space-y-2">
+          <div className="mt-2 text-sm text-slate-700 space-y-2">
             <p>
               These stock picks are generated using a combination of:
             </p>
@@ -494,9 +796,7 @@ export default function Dashboard() {
           </div>
         </details>
       </div>
-      <footer className="text-center text-sm text-gray-500 mt-10">© {new Date().getFullYear()} AI Stock Picks</footer>
+      <footer className="text-center text-sm text-slate-500 mt-10">Copyright {new Date().getFullYear()} AI Stock Picks</footer>
     </main>
   );
 }
-
-

@@ -15,7 +15,7 @@ function computeCutoffIndex(timesISO, months = 4) {
 }
 
 
-const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }) => {
+const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], mlHistory = [] }) => {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
@@ -55,6 +55,11 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
       }
     }
     const cutoffIndex = computeCutoffIndex(dates, 4);
+    const historyMap = new Map();
+    mlHistory.forEach(point => {
+      if (!point?.time || point.value == null) return;
+      historyMap.set(point.time, point.value);
+    });
 
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -84,6 +89,11 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
         const high = ohlc[i][3];
         if (low != null && low < minLow) minLow = low;
         if (high != null &&  high > maxHigh) maxHigh = high;
+        const historyValue = historyMap.get(dates[i]);
+        if (historyValue != null) {
+          if (historyValue < minLow) minLow = historyValue;
+          if (historyValue > maxHigh) maxHigh = historyValue;
+        }
       }
       if (future_ml_val != -100) {
         if (future_ml_val > maxHigh) maxHigh = future_ml_val;
@@ -120,6 +130,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     // render the points on the correct dates.
     const mlLine = mlForecast.map(item => [item.time, item.value]);
     const analystLine = analystForecast.map(item => [item.time, item.value]);
+    const mlHistoryPoints = mlHistory.map(item => [item.time, item.value]);
     
 
 
@@ -136,6 +147,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           const volume = params.find(p => p.seriesName === 'Volume');
           const ml = params.find(p => p.seriesName === 'ML Forecast');
           const analyst = params.find(p => p.seriesName === 'Analyst Forecast');
+          const mlHistoryPoint = params.find(p => p.seriesName === 'ML 1M History');
 
           let text = `<b>${date}</b><br/>`;
 
@@ -164,6 +176,9 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           if (analyst) {
             text += `Analyst Forecast: ${analyst.data[1].toFixed(2)}<br/>`;
           }
+          if (mlHistoryPoint) {
+            text += `ML 1M (History): ${mlHistoryPoint.data[1].toFixed(2)}<br/>`;
+          }
 
           return text;
         }
@@ -171,7 +186,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
 
       legend: {
         top: 30,
-        data: [ticker, 'ML Forecast', 'Analyst Forecast', 'Volume'],
+        data: [ticker, 'ML Forecast', 'ML 1M History', 'Analyst Forecast', 'Volume'],
       },
 
       toolbox: {
@@ -281,6 +296,15 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
           yAxisIndex: 0,
         },
         {
+          name: 'ML 1M History',
+          type: 'scatter',
+          data: mlHistoryPoints,
+          itemStyle: { color: '#06b6d4' },
+          symbolSize: 7,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+        },
+        {
           name: 'Volume',
           type: 'bar',
           data: volumes,
@@ -317,7 +341,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [] }
     return () => {
       chartInstance.current?.dispose();
     };
-  }, [ticker, priceData, mlForecast, analystForecast]);
+  }, [ticker, priceData, mlForecast, analystForecast, mlHistory]);
 
   return <div ref={chartRef} style={{ width: '100%', height: '400px' }} />;
 };

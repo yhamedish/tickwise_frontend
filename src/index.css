@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    font-family: "IBM Plex Sans", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  }
+}
+
 .buy-table thead {
   background-color: #e8f5e9; /* Light green background */
   color: #2e7d32; /* Dark green text */
