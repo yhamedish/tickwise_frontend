@@ -166,6 +166,18 @@ export default function Landing() {
             <a className="hover:text-slate-900 transition" href="#how">
               How it works
             </a>
+            <button
+              onClick={() => navigate('/ai-stock-analysis/')}
+              className="hover:text-slate-900 transition"
+            >
+              AI Stock Analysis
+            </button>
+            <button
+              onClick={() => navigate('/stock-analysis-tools/')}
+              className="hover:text-slate-900 transition"
+            >
+              Stock Analysis Tools
+            </button>
             <a href="mailto:support@tickwisetech.com?subject=TickWise%20Feedback"
             className="hover:text-slate-900">
             Contact
@@ -391,6 +403,40 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* SEO bridge */}
+      <section className="max-w-6xl mx-auto px-6 pb-16">
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-8 shadow-sm">
+            <div className="text-xs uppercase tracking-wide text-slate-500">AI Stock Analysis</div>
+            <h3 className="mt-2 text-2xl font-semibold">Understand signals, not just prices</h3>
+            <p className="mt-3 text-sm text-slate-600 leading-relaxed">
+              TickWise is an AI stock analysis platform that blends ML forecasts with technical
+              and fundamental signals. See why a ticker is rated Buy, Hold, or Sell.
+            </p>
+            <button
+              onClick={() => navigate('/ai-stock-analysis/')}
+              className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+            >
+              Learn about AI Stock Analysis <ArrowRight size={16} />
+            </button>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-8 shadow-sm">
+            <div className="text-xs uppercase tracking-wide text-slate-500">Stock Analysis Tools</div>
+            <h3 className="mt-2 text-2xl font-semibold">Tools built for signal clarity</h3>
+            <p className="mt-3 text-sm text-slate-600 leading-relaxed">
+              Compare forecast ranges, technical momentum, and fundamental health in one place.
+              Filter, sort, and drill into the tools that matter most.
+            </p>
+            <button
+              onClick={() => navigate('/stock-analysis-tools/')}
+              className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+            >
+              Explore Stock Analysis Tools <ArrowRight size={16} />
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* Features */}
       <section id="features" className="max-w-6xl mx-auto px-6 pb-16">
         <div className="text-center mb-10">
@@ -526,7 +572,22 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="text-center text-sm text-slate-500 py-10">
-        Â© {new Date().getFullYear()} TickWise Â· AI-Powered Market Intelligence
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={() => navigate('/ai-stock-analysis/')}
+            className="hover:text-slate-700"
+          >
+            AI Stock Analysis
+          </button>
+          <span className="hidden sm:inline">·</span>
+          <button
+            onClick={() => navigate('/stock-analysis-tools/')}
+            className="hover:text-slate-700"
+          >
+            Stock Analysis Tools
+          </button>
+        </div>
+        <div className="mt-2">Copyright {new Date().getFullYear()} TickWise · AI-Powered Market Intelligence</div>
       </footer>
     </div>
   );
@@ -643,3 +704,4 @@ function Sparkline({ values, height = 140, padding = 8 }) {
     </svg>
   );
 }
+

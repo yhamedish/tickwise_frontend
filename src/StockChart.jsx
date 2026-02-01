@@ -15,7 +15,15 @@ function computeCutoffIndex(timesISO, months = 4) {
 }
 
 
-const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], mlHistory = [] }) => {
+const StockChart = ({
+  ticker,
+  priceData,
+  mlForecast = [],
+  mlForecastP5 = [],
+  mlForecastP95 = [],
+  analystForecast = [],
+  mlHistory = []
+}) => {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
@@ -129,17 +137,24 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
     // or the length doesn't match the main price series, ECharts will still
     // render the points on the correct dates.
     const mlLine = mlForecast.map(item => [item.time, item.value]);
+    const mlLineP5 = mlForecastP5.map(item => [item.time, item.value]);
+    const mlLineP95 = mlForecastP95.map(item => [item.time, item.value]);
     const analystLine = analystForecast.map(item => [item.time, item.value]);
     const mlHistoryPoints = mlHistory.map(item => [item.time, item.value]);
     
 
 
     const option = {
-      title: { text: `${ticker} Price & Forecast`, left: 'center' },
+      title: { text: `${ticker} Price & Forecast`, left: 'center', textStyle: { color: '#0f172a', fontSize: 14, fontWeight: 600 } },
+      backgroundColor: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        { offset: 0, color: '#f8fafc' },
+        { offset: 0.55, color: '#ffffff' },
+        { offset: 1, color: '#ecfeff' }
+      ]),
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(39, 189, 102, 0.9)',
-        textStyle: { fontSize: 11 },
+        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+        textStyle: { fontSize: 11, color: '#f8fafc' },
         formatter: (params) => {
           // params is an array of all series at that x point
           const date = params[0].axisValue;
@@ -147,6 +162,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           const volume = params.find(p => p.seriesName === 'Volume');
           const ml = params.find(p => p.seriesName === 'ML Forecast');
           const analyst = params.find(p => p.seriesName === 'Analyst Forecast');
+          const mlP5 = params.find(p => p.seriesName === 'ML P5');
+          const mlP95 = params.find(p => p.seriesName === 'ML P95');
           const mlHistoryPoint = params.find(p => p.seriesName === 'ML 1M History');
 
           let text = `<b>${date}</b><br/>`;
@@ -176,6 +193,12 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           if (analyst) {
             text += `Analyst Forecast: ${analyst.data[1].toFixed(2)}<br/>`;
           }
+          if (mlP5) {
+            text += `ML P5: ${mlP5.data[1].toFixed(2)}<br/>`;
+          }
+          if (mlP95) {
+            text += `ML P95: ${mlP95.data[1].toFixed(2)}<br/>`;
+          }
           if (mlHistoryPoint) {
             text += `ML 1M (History): ${mlHistoryPoint.data[1].toFixed(2)}<br/>`;
           }
@@ -186,7 +209,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
 
       legend: {
         top: 30,
-        data: [ticker, 'ML Forecast', 'ML 1M History', 'Analyst Forecast', 'Volume'],
+        textStyle: { color: '#334155' },
+        data: [ticker, 'ML Forecast', 'ML P5', 'ML P95', 'ML 1M History', 'Analyst Forecast', 'Volume'],
       },
 
       toolbox: {
@@ -219,7 +243,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           data: dates,
           scale: true,
           boundaryGap: true,
-          axisLine: { onZero: false },
+          axisLine: { onZero: false, lineStyle: { color: '#94a3b8' } },
+          axisLabel: { color: '#64748b' },
           gridIndex: 0,
         },
         {
@@ -228,18 +253,24 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           boundaryGap: true,
           max: value => value.max + 5,
           scale: true,
-          axisLine: { onZero: false },
+          axisLine: { onZero: false, lineStyle: { color: '#94a3b8' } },
+          axisLabel: { color: '#64748b' },
           gridIndex: 1,
-          axisLabel: { show: false },
+          axisLabel: { show: false, color: '#64748b' },
           axisTick: { show: false },
         },
       ],
       yAxis: [
-        { scale: true, gridIndex: 0 },
+        {
+          scale: true,
+          gridIndex: 0,
+          axisLabel: { color: '#64748b' },
+          splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
+        },
         {
           gridIndex: 1,
           min: 0,                         // force bars to start at y=0
-          axisLabel: { show: false },
+          axisLabel: { show: false, color: '#64748b' },
           axisTick: { show: false },
           splitLine: { show: false },
         },
@@ -273,10 +304,10 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           type: 'candlestick',
           data: ohlc,
           itemStyle: {
-            color: '#26a69a',
-            color0: '#ef5350',
-            borderColor: '#26a69a',
-            borderColor0: '#ef5350',
+            color: '#22c55e',
+            color0: '#ef4444',
+            borderColor: '#16a34a',
+            borderColor0: '#dc2626',
           },
           xAxisIndex: 0,
           yAxisIndex: 0,
@@ -285,7 +316,25 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           name: 'ML Forecast',
           type: 'line',
           data: mlLine,
-          lineStyle: { color: '#2196F3' },
+          lineStyle: { color: '#3b82f6', width: 2, type: 'dashed' },
+          smooth: true,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+        },
+        {
+          name: 'ML P5',
+          type: 'line',
+          data: mlLineP5,
+          lineStyle: { color: '#a855f7', width: 1.5 },
+          smooth: true,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+        },
+        {
+          name: 'ML P95',
+          type: 'line',
+          data: mlLineP95,
+          lineStyle: { color: '#f97316', width: 1.5 },
           smooth: true,
           xAxisIndex: 0,
           yAxisIndex: 0,
@@ -294,7 +343,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           name: 'Analyst Forecast',
           type: 'line',
           data: analystLine,
-          lineStyle: { color: '#4CAF50' },
+          lineStyle: { color: '#10b981', width: 2 },
           smooth: true,
           xAxisIndex: 0,
           yAxisIndex: 0,
@@ -303,8 +352,8 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           name: 'ML 1M History',
           type: 'scatter',
           data: mlHistoryPoints,
-          itemStyle: { color: '#06b6d4' },
-          symbolSize: 7,
+          itemStyle: { color: '#06b6d4', shadowBlur: 8, shadowColor: 'rgba(6, 182, 212, 0.4)' },
+          symbolSize: 8,
           xAxisIndex: 0,
           yAxisIndex: 0,
         },
@@ -314,7 +363,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
           data: volumes,
           xAxisIndex: 1,
           yAxisIndex: 1,
-          itemStyle: { color: '#90A4AE' },
+          itemStyle: { color: '#38bdf8', opacity: 0.55 },
         },
       ],
     };
@@ -345,7 +394,7 @@ const StockChart = ({ ticker, priceData, mlForecast = [], analystForecast = [], 
     return () => {
       chartInstance.current?.dispose();
     };
-  }, [ticker, priceData, mlForecast, analystForecast, mlHistory]);
+  }, [ticker, priceData, mlForecast, mlForecastP5, mlForecastP95, analystForecast, mlHistory]);
 
   return <div ref={chartRef} style={{ width: '100%', height: '400px' }} />;
 };

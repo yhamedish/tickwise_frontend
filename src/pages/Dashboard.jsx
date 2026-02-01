@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { List } from 'react-window';
 import StockChart from '../StockChart';
 import '../index.css';
-import { BarChart2, ThumbsUp, MessageCircle, Activity } from 'lucide-react';
+import { BarChart2, ThumbsUp, Activity } from 'lucide-react';
 
 
 // Dummy fallback data. If the call to VITE_STOCKS_JSON_SAS_URL fails, the
@@ -93,7 +93,6 @@ function toNumber(value) {
 function buildScoreRanges(rows) {
   const ranges = {
     tickwise_score: { min: null, max: null },
-    sentiment: { min: null, max: null },
     technical: { min: null, max: null },
     fundamental_score: { min: null, max: null },
     ai1m_lower_pct: { min: null, max: null },
@@ -134,7 +133,6 @@ function getHistoryPointsForTicker(histData, ticker) {
     if (!entry || typeof entry !== 'object') return;
     const entryDate =
       parentDate ??
-      entry.analysis_date ??
       entry.Date_y ??
       entry.Date_x ??
       entry.date ??
@@ -236,6 +234,47 @@ function SortableHeader({ label, sortKey, sortConfig, setSortConfig }) {
     </div>
   );
 }
+
+const StockDetailChart = React.memo(function StockDetailChart({ stock, priceHistory, mlHistory }) {
+  const priceData = priceHistory[stock.ticker] || [];
+  const mlForecast = useMemo(() => {
+    return generateForecastLine(
+      priceData,
+      (stock.forecast1m - stock.Close) * 100 / stock.Close,
+      30
+    );
+  }, [priceData, stock.forecast1m, stock.Close]);
+  const mlForecastP5 = useMemo(() => {
+    return generateForecastLine(
+      priceData,
+      (stock.forecast1m_p5 - stock.Close) * 100 / stock.Close,
+      30
+    );
+  }, [priceData, stock.forecast1m_p5, stock.Close]);
+  const mlForecastP95 = useMemo(() => {
+    return generateForecastLine(
+      priceData,
+      (stock.forecast1m_p95 - stock.Close) * 100 / stock.Close,
+      30
+    );
+  }, [priceData, stock.forecast1m_p95, stock.Close]);
+
+  const analystForecast = useMemo(() => {
+    return generateForecastLine(priceData, stock.analysts_forecast, 365);
+  }, [priceData, stock.analysts_forecast]);
+
+  return (
+    <StockChart
+      ticker={stock.ticker}
+      priceData={priceData}
+      mlForecast={mlForecast}
+      mlForecastP5={mlForecastP5}
+      mlForecastP95={mlForecastP95}
+      mlHistory={mlHistory}
+      analystForecast={analystForecast}
+    />
+  );
+});
 
 
 
@@ -393,19 +432,14 @@ export default function Dashboard() {
       ).toFixed(1)
     : '0.0';
 
-  const avgSentiment = totalAnalyzed > 0
-    ? (
-        stocksData.reduce((sum, s) => sum + (Number(s.sentiment) || 0), 0) / totalAnalyzed
-      ).toFixed(2)
-    : '0.00';
 
   // Search and filter state.
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
   const [showFilters, setShowFilters] = useState(true);
+  const [detailTab, setDetailTab] = useState('recommendation');
   const [scoreFilters, setScoreFilters] = useState({
     tickwise_score: { min: '', max: '' },
-    sentiment: { min: '', max: '' },
     technical: { min: '', max: '' },
     fundamental_score: { min: '', max: '' },
     ai1m_lower_pct: { min: '', max: '' },
@@ -422,7 +456,6 @@ export default function Dashboard() {
     return {
       ...stock,
       tickwise_score: Number(stock.tickwise_score),
-      sentiment: Number(stock.sentiment),
       technical: Number(stock.technical),
       fundamental_score: Number(stock.fundamental_score),
       ai1m_lower_pct: ai1mLowerPct,
@@ -460,12 +493,36 @@ export default function Dashboard() {
   );
 
   const selectedStock = rows.find(row => row.ticker === selectedTicker);
-  const historicalMlPoints = selectedTicker
-    ? getHistoryPointsForTicker(histData, selectedTicker)
-    : [];
+  const historicalMlPoints = useMemo(() => {
+    if (!selectedTicker) return [];
+    return getHistoryPointsForTicker(histData, selectedTicker);
+  }, [histData, selectedTicker]);
+  const formatPct = (value) => {
+    const n = Number(value);
+    if (isNaN(n)) return '—';
+    const sign = n > 0 ? '+' : '';
+    return `${sign}${n.toFixed(1)}%`;
+  };
+  const formatNum = (value, digits = 2) => {
+    const n = Number(value);
+    if (isNaN(n)) return '—';
+    return n.toFixed(digits);
+  };
+  const formatPrice = (value) => {
+    const n = Number(value);
+    if (isNaN(n)) return '—';
+    return `$${n.toFixed(2)}`;
+  };
+  const signalBadgeClass = (value) => {
+    const v = String(value || '').toLowerCase();
+    if (v === 'buy') return 'bg-emerald-500 text-white border-emerald-600 shadow-sm';
+    if (v === 'sell') return 'bg-rose-500 text-white border-rose-600 shadow-sm';
+    if (v === 'hold') return 'bg-amber-500 text-white border-amber-600 shadow-sm';
+    return 'bg-slate-400 text-white border-slate-500 shadow-sm';
+  };
   const rowHeight = 40;
   const listHeight = 240;
-  const gridTemplate = '90px 220px repeat(7, minmax(110px, 1fr))';
+  const gridTemplate = '90px 220px repeat(6, minmax(110px, 1fr))';
 
   const Row = ({ index, style }) => {
     const stock = filteredRows[index];
@@ -484,7 +541,6 @@ export default function Dashboard() {
         <div className="px-3 py-2 font-medium">{stock.ticker}</div>
         <div className="px-3 py-2">{stock.Security}</div>
         <div className="px-3 py-2">{Number(stock.tickwise_score).toFixed(1)}%</div>
-        <div className="px-3 py-2">{Number(stock.sentiment).toFixed(1)}%</div>
         <div className="px-3 py-2">{Number(stock.technical).toFixed(1)}%</div>
         <div className="px-3 py-2">{Number(stock.fundamental_score).toFixed(1)}%</div>
         <div className="px-3 py-2">{Number(stock.ai1m_upper_pct).toFixed(1)}</div>
@@ -507,7 +563,6 @@ export default function Dashboard() {
   const resetScoreFilters = () => {
     setScoreFilters({
       tickwise_score: { min: '', max: '' },
-      sentiment: { min: '', max: '' },
       technical: { min: '', max: '' },
       fundamental_score: { min: '', max: '' },
       ai1m_lower_pct: { min: '', max: '' },
@@ -535,7 +590,7 @@ export default function Dashboard() {
       
 
       {/* Statistic cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white/90 border border-slate-200 border-l-4 border-cyan-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
           <div className="flex items-center gap-4">
             <div className="text-cyan-600">
@@ -555,17 +610,6 @@ export default function Dashboard() {
             <div>
               <div className="text-sm text-slate-600">Avg Buy TickWise Score</div>
               <div className="text-2xl font-semibold text-slate-900">{avgBuyConfidence}%</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white/90 border border-slate-200 border-l-4 border-amber-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
-          <div className="flex items-center gap-4">
-            <div className="text-amber-600">
-              <MessageCircle size={28} />
-            </div>
-            <div>
-              <div className="text-sm text-slate-600">Net Sentiment</div>
-              <div className="text-2xl font-semibold text-slate-900">{avgSentiment > 0 ? '+' : ''}{avgSentiment}</div>
             </div>
           </div>
         </div>
@@ -630,7 +674,6 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
           {[
             { key: 'tickwise_score', label: 'TickWise Score' },
-            { key: 'sentiment', label: 'Sentiment' },
             { key: 'technical', label: 'Technical' },
             { key: 'fundamental_score', label: 'Fundamental' },
             { key: 'ai1m_lower_pct', label: 'AI 1M Lower %' },
@@ -667,9 +710,9 @@ export default function Dashboard() {
       {/* Render all stocks */}
       <div className="mb-10">
         <h2 className="text-xl font-semibold mb-4">All Stocks</h2>
-        <div className="bg-white rounded shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
           <div
-            className="bg-slate-100 border-b border-slate-200 text-sm text-slate-700"
+            className="bg-gradient-to-r from-slate-100 via-cyan-100 to-emerald-100 border-b border-slate-200 text-sm text-slate-700"
             style={{ display: 'grid', gridTemplateColumns: gridTemplate }}
           >
             <div className="px-3 py-2 font-medium">Ticker</div>
@@ -677,12 +720,6 @@ export default function Dashboard() {
             <SortableHeader
               label="TickWise Score"
               sortKey="tickwise_score"
-              sortConfig={sortConfig}
-              setSortConfig={setSortConfig}
-            />
-            <SortableHeader
-              label="Sentiment"
-              sortKey="sentiment"
               sortConfig={sortConfig}
               setSortConfig={setSortConfig}
             />
@@ -747,32 +784,171 @@ export default function Dashboard() {
               Clear
             </button>
           </div>
-          <div className="mb-2 flex gap-4 text-sm text-slate-700">
+          <div className="mb-3 flex gap-4 text-sm text-slate-700">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 bg-blue-500 inline-block rounded-full"></span>
               ML Forecast
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-cyan-500 inline-block rounded-full"></span>
+              ML 1M History
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 bg-orange-400 inline-block rounded-full"></span>
               Analyst Forecast
             </div>
           </div>
-          
-          <StockChart
-            ticker={selectedStock.ticker}
-            priceData={priceHistory[selectedStock.ticker] || []}
-            mlForecast={generateForecastLine(
-              priceHistory[selectedStock.ticker] || [],
-              (selectedStock.forecast1m - selectedStock.Close) * 100 / selectedStock.Close,
-              30
-            )}
-            mlHistory={historicalMlPoints}
-            analystForecast={generateForecastLine(
-              priceHistory[selectedStock.ticker] || [],
-              selectedStock.analysts_forecast,
-              365
-            )}
-          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4">
+            <div>
+              <StockDetailChart
+                stock={selectedStock}
+                priceHistory={priceHistory}
+                mlHistory={historicalMlPoints}
+              />
+            </div>
+
+            <div className="bg-gradient-to-br from-cyan-50 via-slate-50 to-emerald-50 border border-cyan-200 rounded-lg p-3 shadow-sm">
+              <div className="grid grid-cols-2 gap-2 mb-3 bg-white/90 border border-cyan-200 rounded-md p-2 shadow-sm">
+                {[
+                  { key: 'recommendation', label: 'Recommendation' },
+                  { key: 'tickwise', label: 'TickWise' },
+                  { key: 'technical', label: 'Technical' },
+                  { key: 'fundamental', label: 'Fundamental' },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setDetailTab(tab.key)}
+                    className={`w-full px-2.5 py-1.5 text-xs rounded-md border font-medium ${
+                      detailTab === tab.key
+                        ? 'bg-cyan-100 border-cyan-500 text-cyan-800 shadow-sm'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {detailTab === 'recommendation' && (
+                <div className="grid grid-cols-2 gap-2 text-sm bg-white border border-cyan-200 rounded-md p-3 shadow-sm">
+                  <div className="text-slate-500">Recommendation</div>
+                  <div className="font-medium text-slate-900">
+                    <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.recommendation)}`}>
+                      {selectedStock.recommendation || '—'}
+                    </span>
+                  </div>
+                  <div className="text-slate-500">TickWise Score</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.tickwise_score)}</div>
+                  <div className="text-slate-500">ML Score</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.ml_score)}</div>
+                  <div className="text-slate-500">Analyst Score</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.analyst_score)}</div>
+                  <div className="text-slate-500">Last Close</div>
+                  <div className="font-medium text-slate-900">{formatPrice(selectedStock.Close)}</div>
+                </div>
+              )}
+
+              {detailTab === 'tickwise' && (
+                <div className="grid grid-cols-2 gap-2 text-sm bg-white border border-cyan-200 rounded-md p-3 shadow-sm">
+                  <div className="text-slate-500">TickWise Score</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.tickwise_score)}</div>
+                  <div className="text-slate-500">ML 1M Forecast</div>
+                  <div className="font-medium text-slate-900">
+                    {formatPct(((selectedStock.forecast1m - selectedStock.Close) * 100) / selectedStock.Close)}
+                  </div>
+                  <div className="text-slate-500">ML 1M Range</div>
+                  <div className="font-medium text-slate-900">
+                    {formatPct(((selectedStock.forecast1m_p5 - selectedStock.Close) * 100) / selectedStock.Close)} / {formatPct(((selectedStock.forecast1m_p95 - selectedStock.Close) * 100) / selectedStock.Close)}
+                  </div>
+                  <div className="text-slate-500">Analyst 1Y %</div>
+                  <div className="font-medium text-slate-900">
+                    {formatPct(((selectedStock.analysts_forecast - selectedStock.Close) * 100) / selectedStock.Close)}
+                  </div>
+                </div>
+              )}
+
+              {detailTab === 'technical' && (
+                <div className="text-sm space-y-3">
+                  <div className="grid grid-cols-2 gap-2 bg-white border border-cyan-200 rounded-md p-3 shadow-sm">
+                    <div className="text-slate-500">Technical Score</div>
+                    <div className="font-medium text-slate-900">{formatPct(selectedStock.technical)}</div>
+                  </div>
+
+                  <div className="text-xs uppercase tracking-wide text-cyan-700">Momentum</div>
+                  <div className="grid grid-cols-2 gap-2 bg-white border border-emerald-200 rounded-md p-3 shadow-sm">
+                    <div className="text-slate-500">RSI (14)</div>
+                    <div className="font-medium text-slate-900">{formatNum(selectedStock.rsi_14)}</div>
+                    <div className="text-slate-500">MACD (12,26,9)</div>
+                    <div className="font-medium text-slate-900">{formatNum(selectedStock.MACD_12_26_9)}</div>
+                    <div className="text-slate-500">ADX (14)</div>
+                    <div className="font-medium text-slate-900">{formatNum(selectedStock.ADX_14)}</div>
+                    <div className="text-slate-500">Momentum (10)</div>
+                    <div className="font-medium text-slate-900">{formatNum(selectedStock.momentum_10)}</div>
+                    <div className="text-slate-500">CCI</div>
+                    <div className="font-medium text-slate-900">{formatNum(selectedStock['CCI_14_0.015'])}</div>
+                    <div className="text-slate-500">StochRSI K / D</div>
+                    <div className="font-medium text-slate-900">
+                      {formatNum(selectedStock.STOCHRSIk_14_14_3_3)} / {formatNum(selectedStock.STOCHRSId_14_14_3_3)}
+                    </div>
+                    <div className="text-slate-500">AO</div>
+                    <div className="font-medium text-slate-900">{formatNum(selectedStock.ao)}</div>
+                    <div className="text-slate-500">Momentum Signal</div>
+                    <div className="font-medium text-slate-900">
+                      <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.signal_momentum)}`}>
+                        {selectedStock.signal_momentum ?? '—'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-xs uppercase tracking-wide text-cyan-700">Moving Averages</div>
+                  <div className="grid grid-cols-2 gap-2 bg-white border border-amber-200 rounded-md p-3 shadow-sm">
+                    <div className="text-slate-500">SMA 10 / 20</div>
+                    <div className="font-medium text-slate-900">
+                      {formatNum(selectedStock.sma_10)} / {formatNum(selectedStock.sma_20)}
+                    </div>
+                    <div className="text-slate-500">SMA 50 / 200</div>
+                    <div className="font-medium text-slate-900">
+                      {formatNum(selectedStock.sma_50)} / {formatNum(selectedStock.sma_200)}
+                    </div>
+                    <div className="text-slate-500">EMA 10 / 20</div>
+                    <div className="font-medium text-slate-900">
+                      {formatNum(selectedStock.ema_10)} / {formatNum(selectedStock.ema_20)}
+                    </div>
+                    <div className="text-slate-500">EMA 50 / 200</div>
+                    <div className="font-medium text-slate-900">
+                      {formatNum(selectedStock.ema_50)} / {formatNum(selectedStock.ema_200)}
+                    </div>
+                    <div className="text-slate-500">MA Signals</div>
+                    <div className="font-medium text-slate-900 flex gap-2">
+                      <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.signal_sma_10)}`}>
+                        {selectedStock.signal_sma_10 ?? '—'}
+                      </span>
+                      <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.signal_ema_10)}`}>
+                        {selectedStock.signal_ema_10 ?? '—'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {detailTab === 'fundamental' && (
+                <div className="grid grid-cols-2 gap-2 text-sm bg-white border border-cyan-200 rounded-md p-3 shadow-sm">
+                  <div className="text-slate-500">Fundamental Score</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.fundamental_score)}</div>
+                  <div className="text-slate-500">Profitability</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.profitability * 100)}</div>
+                  <div className="text-slate-500">Valuation</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.valuation * 100)}</div>
+                  <div className="text-slate-500">Stability</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.stability * 100)}</div>
+                  <div className="text-slate-500">Yield</div>
+                  <div className="font-medium text-slate-900">{formatPct(selectedStock.yield * 100)}</div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
       <div className="mb-6 bg-white rounded shadow-sm border border-slate-200 p-4">
