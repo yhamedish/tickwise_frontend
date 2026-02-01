@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 
 const distDir = "dist";
-const routes = ["picks"]; // add more routes later if you have them
+const routes = ["picks", "ai-stock-analysis", "stock-analysis-tools"]; // add more routes later if you have them
 
 const src = path.join(distDir, "index.html");
 if (!fs.existsSync(src)) {
