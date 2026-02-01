@@ -297,6 +297,8 @@ export default function Dashboard() {
   const [stocksError, setStocksError] = useState(null);
   const [histData, setHistData] = useState([]);
   const [loadingHist, setLoadingHist] = useState(true);
+  const [backtestStats, setBacktestStats] = useState(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
 
   // Environment variable for the container SAS URL. Should look like
   // "https://<account>.blob.core.windows.net/<container>?<sas>".
@@ -363,6 +365,142 @@ export default function Dashboard() {
     };
     fetchHistory();
   }, [histUrl]);
+
+  useEffect(() => {
+    if (!base || !Array.isArray(histData) || histData.length === 0) return;
+
+    const getHistDate = (row) =>
+      normalizeToISODate(row?.Date_y ?? row?.Date_x ?? row?.analysis_date ?? row?.date ?? row?.Date);
+
+    const buildHistoryMap = (rows) => {
+      const byDate = new Map();
+      rows.forEach((r) => {
+        const t = normalizeToISODate(r?.date ?? r?.Date ?? r?.time);
+        const c = Number(r?.Close ?? r?.close);
+        if (!t || !Number.isFinite(c)) return;
+        byDate.set(t, c);
+      });
+      const dates = Array.from(byDate.keys()).sort();
+      return { byDate, dates };
+    };
+
+    const findCloseAtOrBefore = (dates, byDate, target) => {
+      if (!dates.length) return null;
+      let lo = 0;
+      let hi = dates.length - 1;
+      let best = null;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const d = dates[mid];
+        if (d <= target) {
+          best = d;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return best ? byDate.get(best) : null;
+    };
+
+    const run = async () => {
+      setBacktestLoading(true);
+      try {
+        const rows = histData
+          .map((row) => ({
+            row,
+            date: getHistDate(row),
+          }))
+          .filter((x) => x.date && x.row?.recommendation?.toLowerCase() === 'buy');
+
+        const byDate = new Map();
+        rows.forEach(({ row, date }) => {
+          if (!byDate.has(date)) byDate.set(date, []);
+          byDate.get(date).push(row);
+        });
+
+        const dates = Array.from(byDate.keys()).sort();
+        const targetDate = dates[0];
+        const dayRows = byDate.get(targetDate) || [];
+        dayRows.sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0));
+        const unique = new Map();
+        dayRows.forEach((r) => {
+          const ticker = r?.ticker;
+          if (!ticker) return;
+          if (!unique.has(ticker)) unique.set(ticker, r);
+        });
+        const picks = Array.from(unique.values()).slice(0, 5).map((r) => ({ date: targetDate, row: r }));
+
+        const tickers = Array.from(new Set(picks.map((p) => p.row?.ticker).filter(Boolean)));
+        const historyCache = new Map();
+
+        await Promise.all(
+          tickers.map(async (ticker) => {
+            try {
+              const historyUrl = `${base}/data/${ticker}.json`;
+              const res = await fetch(historyUrl);
+              if (!res.ok) throw new Error(`Failed ${historyUrl}`);
+              const json = await res.json();
+              const map = buildHistoryMap(Array.isArray(json) ? json : []);
+              historyCache.set(ticker, map);
+            } catch (e) {
+              console.error('Backtest history load failed:', ticker, e);
+            }
+          })
+        );
+
+        const returns = [];
+        const detailRows = [];
+        picks.forEach(({ date, row }) => {
+          const ticker = row?.ticker;
+          if (!ticker) return;
+          const hist = historyCache.get(ticker);
+          if (!hist) return;
+          const entryClose = Number(row?.Close);
+          const entryPrice =
+            Number.isFinite(entryClose) ? entryClose : findCloseAtOrBefore(hist.dates, hist.byDate, date);
+          if (!Number.isFinite(entryPrice)) return;
+          const latestDate = hist.dates[hist.dates.length - 1];
+          const latestClose = latestDate ? hist.byDate.get(latestDate) : null;
+          if (!Number.isFinite(latestClose)) return;
+          const r = ((latestClose - entryPrice) * 100) / entryPrice;
+          returns.push(r);
+
+          const currentReturn = r;
+          detailRows.push({
+            date,
+            ticker,
+            entryPrice,
+            latestClose,
+            currentReturn,
+          });
+        });
+
+        if (returns.length === 0) {
+          setBacktestStats({ sample: 0 });
+          return;
+        }
+        const avg = returns.reduce((s, v) => s + v, 0) / returns.length;
+        const sorted = [...returns].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        const wins = returns.filter((r) => r > 0).length;
+        setBacktestStats({
+          sample: returns.length,
+          avg,
+          median,
+          winRate: (wins / returns.length) * 100,
+          windowDays: 10,
+          picksPerDay: 5,
+          targetDate,
+          detailRows,
+        });
+      } finally {
+        setBacktestLoading(false);
+      }
+    };
+
+    run();
+  }, [histData, base]);
 
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
@@ -624,6 +762,88 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mb-6 bg-white/90 border border-slate-200 rounded-2xl p-5 shadow-sm backdrop-blur">
+        <div className="flex items-center justify-between gap-4 mb-3">
+          <div>
+            <div className="text-sm text-slate-500">Backtest snapshot</div>
+            <div className="text-lg font-semibold text-slate-900">Top Buys: 10-Day Return to Today</div>
+          </div>
+          <div className="text-xs text-slate-500">
+            Picks from {backtestStats?.targetDate || '10 days ago'} · Top 5 picks
+          </div>
+        </div>
+        {backtestLoading && (
+          <div className="text-sm text-slate-600">Calculating recent performance…</div>
+        )}
+        {!backtestLoading && backtestStats?.sample === 0 && (
+          <div className="text-sm text-slate-600">Not enough data to compute recent performance.</div>
+        )}
+        {!backtestLoading && backtestStats?.sample > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+              <div className="text-xs text-emerald-700">Avg Return</div>
+              <div className="mt-1 text-2xl font-semibold text-emerald-900">
+                {formatPct(backtestStats.avg)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-4">
+              <div className="text-xs text-cyan-700">Median Return</div>
+              <div className="mt-1 text-2xl font-semibold text-cyan-900">
+                {formatPct(backtestStats.median)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+              <div className="text-xs text-amber-700">Win Rate</div>
+              <div className="mt-1 text-2xl font-semibold text-amber-900">
+                {formatPct(backtestStats.winRate)}
+              </div>
+              <div className="text-xs text-amber-700 mt-1">
+                Sample size: {backtestStats.sample}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!backtestLoading && backtestStats?.detailRows?.length > 0 && (
+          <details className="mt-4">
+            <summary className="cursor-pointer text-sm font-semibold text-cyan-700">
+              Show tickers from 10 days ago and current returns
+            </summary>
+            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+              <table className="min-w-full text-sm text-left">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Ticker</th>
+                    <th className="px-3 py-2">Entry</th>
+                    <th className="px-3 py-2">Latest Close</th>
+                    <th className="px-3 py-2">Return to Today %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backtestStats.detailRows
+                    .sort((a, b) => (a.date < b.date ? 1 : -1))
+                    .map((row, idx) => {
+                      const isPos = row.currentReturn != null && row.currentReturn >= 0;
+                      return (
+                        <tr key={`${row.date}-${row.ticker}-${idx}`} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{row.date}</td>
+                          <td className="px-3 py-2 font-medium">{row.ticker}</td>
+                          <td className="px-3 py-2">{formatPrice(row.entryPrice)}</td>
+                          <td className="px-3 py-2">{formatPrice(row.latestClose)}</td>
+                          <td className={`px-3 py-2 font-semibold ${isPos ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {row.currentReturn == null ? '—' : formatPct(row.currentReturn)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
       </div>
 
       <div className="flex items-center justify-between mb-3">
