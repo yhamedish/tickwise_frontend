@@ -22,7 +22,8 @@ const StockChart = ({
   mlForecastP5 = [],
   mlForecastP95 = [],
   analystForecast = [],
-  mlHistory = []
+  mlHistory = [],
+  scoreSeries = []
 }) => {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
@@ -62,6 +63,15 @@ const StockChart = ({
         }
       }
     }
+    const scoreDates = scoreSeries.flatMap((s) => s.data?.map((d) => d[0]) || []);
+    scoreDates.forEach((d) => {
+      if (d && !dates.includes(d)) {
+        dates.push(d);
+        ohlc.push([null, null, null, null]);
+        volumes.push(null);
+      }
+    });
+
     const cutoffIndex = computeCutoffIndex(dates, 4);
     const historyMap = new Map();
     mlHistory.forEach(point => {
@@ -165,6 +175,7 @@ const StockChart = ({
           const mlP5 = params.find(p => p.seriesName === 'ML P5');
           const mlP95 = params.find(p => p.seriesName === 'ML P95');
           const mlHistoryPoint = params.find(p => p.seriesName === 'ML 1M History');
+          const scorePoint = params.find(p => p.seriesName?.includes('Score'));
 
           let text = `<b>${date}</b><br/>`;
 
@@ -202,6 +213,9 @@ const StockChart = ({
           if (mlHistoryPoint) {
             text += `ML 1M (History): ${mlHistoryPoint.data[1].toFixed(2)}<br/>`;
           }
+          if (scorePoint) {
+            text += `${scorePoint.seriesName}: ${scorePoint.data[1].toFixed(1)}<br/>`;
+          }
 
           return text;
         }
@@ -210,7 +224,7 @@ const StockChart = ({
       legend: {
         top: 30,
         textStyle: { color: '#334155' },
-        data: [ticker, 'ML Forecast', 'ML P5', 'ML P95', 'ML 1M History', 'Analyst Forecast', 'Volume'],
+        data: [ticker, 'ML Forecast', 'ML P5', 'ML P95', 'ML 1M History', 'Analyst Forecast', 'Volume', ...scoreSeries.map(s => s.name)],
       },
 
       toolbox: {
@@ -273,6 +287,14 @@ const StockChart = ({
           axisLabel: { show: false, color: '#64748b' },
           axisTick: { show: false },
           splitLine: { show: false },
+        },
+        {
+          gridIndex: 0,
+          min: 0,
+          max: 100,
+          axisLabel: { color: '#64748b' },
+          splitLine: { show: false },
+          position: 'right',
         },
       ],
       // dataZoom: [
@@ -365,6 +387,15 @@ const StockChart = ({
           yAxisIndex: 1,
           itemStyle: { color: '#38bdf8', opacity: 0.55 },
         },
+        ...scoreSeries.map((s) => ({
+          name: s.name,
+          type: 'line',
+          data: s.data,
+          lineStyle: { color: s.color, width: 2 },
+          smooth: true,
+          xAxisIndex: 0,
+          yAxisIndex: 2,
+        })),
       ],
     };
 
@@ -394,7 +425,7 @@ const StockChart = ({
     return () => {
       chartInstance.current?.dispose();
     };
-  }, [ticker, priceData, mlForecast, mlForecastP5, mlForecastP95, analystForecast, mlHistory]);
+  }, [ticker, priceData, mlForecast, mlForecastP5, mlForecastP95, analystForecast, mlHistory, scoreSeries]);
 
   return <div ref={chartRef} style={{ width: '100%', height: '400px' }} />;
 };

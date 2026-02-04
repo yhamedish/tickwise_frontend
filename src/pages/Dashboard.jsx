@@ -185,6 +185,60 @@ function getHistoryPointsForTicker(histData, ticker) {
   return points.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
 }
 
+function getScoreHistoryForTicker(histData, ticker) {
+  if (!histData) return { tickwise: [], technical: [], fundamental: [] };
+  const out = { tickwise: [], technical: [], fundamental: [] };
+
+  const push = (series, dateValue, value) => {
+    const time = normalizeToISODate(dateValue);
+    const v = Number(value);
+    if (!time || isNaN(v)) return;
+    out[series].push({ time, value: v });
+  };
+
+  const scanEntry = (entry, parentDate) => {
+    if (!entry || typeof entry !== 'object') return;
+    const entryDate =
+      parentDate ??
+      entry.Date_y ??
+      entry.Date_x ??
+      entry.analysis_date ??
+      entry.date ??
+      entry.Date ??
+      entry.run_date ??
+      entry.as_of ??
+      entry.generated_at ??
+      entry.time;
+
+    if (entry.ticker === ticker) {
+      push('tickwise', entryDate, entry.tickwise_score);
+      push('technical', entryDate, entry.technical);
+      push('fundamental', entryDate, entry.fundamental_score);
+    }
+  };
+
+  if (Array.isArray(histData)) {
+    histData.forEach(entry => scanEntry(entry, null));
+  } else if (typeof histData === 'object') {
+    if (Array.isArray(histData[ticker])) {
+      histData[ticker].forEach(entry =>
+        scanEntry(entry, entry.date ?? entry.Date ?? entry.Date_y ?? entry.Date_x)
+      );
+    } else {
+      Object.keys(histData).forEach(key => {
+        const entry = histData[key];
+        scanEntry(entry, key);
+      });
+    }
+  }
+
+  Object.keys(out).forEach(key => {
+    out[key].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  });
+
+  return out;
+}
+
 function SortableTH({ label, sortKey, sortConfig, setSortConfig }) {
   const isActive = sortConfig.key === sortKey;
 
@@ -235,7 +289,13 @@ function SortableHeader({ label, sortKey, sortConfig, setSortConfig }) {
   );
 }
 
-const StockDetailChart = React.memo(function StockDetailChart({ stock, priceHistory, mlHistory }) {
+const StockDetailChart = React.memo(function StockDetailChart({
+  stock,
+  priceHistory,
+  mlHistory,
+  scoreHistory,
+  scoreSeriesSelection
+}) {
   const priceData = priceHistory[stock.ticker] || [];
   const mlForecast = useMemo(() => {
     return generateForecastLine(
@@ -263,6 +323,32 @@ const StockDetailChart = React.memo(function StockDetailChart({ stock, priceHist
     return generateForecastLine(priceData, stock.analysts_forecast, 365);
   }, [priceData, stock.analysts_forecast]);
 
+  const scoreSeries = useMemo(() => {
+    const series = [];
+    if (scoreSeriesSelection?.tickwise) {
+      series.push({
+        name: 'TickWise Score',
+        color: '#0ea5e9',
+        data: (scoreHistory?.tickwise || []).map((p) => [p.time, p.value]),
+      });
+    }
+    if (scoreSeriesSelection?.technical) {
+      series.push({
+        name: 'Technical Score',
+        color: '#f59e0b',
+        data: (scoreHistory?.technical || []).map((p) => [p.time, p.value]),
+      });
+    }
+    if (scoreSeriesSelection?.fundamental) {
+      series.push({
+        name: 'Fundamental Score',
+        color: '#8b5cf6',
+        data: (scoreHistory?.fundamental || []).map((p) => [p.time, p.value]),
+      });
+    }
+    return series;
+  }, [scoreHistory, scoreSeriesSelection]);
+
   return (
     <StockChart
       ticker={stock.ticker}
@@ -271,6 +357,7 @@ const StockDetailChart = React.memo(function StockDetailChart({ stock, priceHist
       mlForecastP5={mlForecastP5}
       mlForecastP95={mlForecastP95}
       mlHistory={mlHistory}
+      scoreSeries={scoreSeries}
       analystForecast={analystForecast}
     />
   );
@@ -419,8 +506,25 @@ export default function Dashboard() {
         });
 
         const dates = Array.from(byDate.keys()).sort();
-        const targetDate = dates[0];
-        const dayRows = byDate.get(targetDate) || [];
+        const targetAnchor = addDays(new Date(), -30);
+        const targetDate = (() => {
+          if (!dates.length) return null;
+          let lo = 0;
+          let hi = dates.length - 1;
+          let best = dates[0];
+          while (lo <= hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            const d = dates[mid];
+            if (d <= targetAnchor) {
+              best = d;
+              lo = mid + 1;
+            } else {
+              hi = mid - 1;
+            }
+          }
+          return best;
+        })();
+        const dayRows = targetDate ? byDate.get(targetDate) || [] : [];
         dayRows.sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0));
         const unique = new Map();
         dayRows.forEach((r) => {
@@ -489,8 +593,8 @@ export default function Dashboard() {
           avg,
           median,
           winRate: (wins / returns.length) * 100,
-          windowDays: 10,
-          picksPerDay: 5,
+          windowDays: 30,
+          picksPerDay: 10,
           targetDate,
           detailRows,
         });
@@ -576,6 +680,11 @@ export default function Dashboard() {
   const [filterType, setFilterType] = useState('');
   const [showFilters, setShowFilters] = useState(true);
   const [detailTab, setDetailTab] = useState('recommendation');
+  const [scoreSeriesSelection, setScoreSeriesSelection] = useState({
+    tickwise: false,
+    technical: false,
+    fundamental: false,
+  });
   const [scoreFilters, setScoreFilters] = useState({
     tickwise_score: { min: '', max: '' },
     technical: { min: '', max: '' },
@@ -634,6 +743,10 @@ export default function Dashboard() {
   const historicalMlPoints = useMemo(() => {
     if (!selectedTicker) return [];
     return getHistoryPointsForTicker(histData, selectedTicker);
+  }, [histData, selectedTicker]);
+  const scoreHistory = useMemo(() => {
+    if (!selectedTicker) return { tickwise: [], technical: [], fundamental: [] };
+    return getScoreHistoryForTicker(histData, selectedTicker);
   }, [histData, selectedTicker]);
   const formatPct = (value) => {
     const n = Number(value);
@@ -768,10 +881,10 @@ export default function Dashboard() {
         <div className="flex items-center justify-between gap-4 mb-3">
           <div>
             <div className="text-sm text-slate-500">Backtest snapshot</div>
-            <div className="text-lg font-semibold text-slate-900">Top Buys: 10-Day Return to Today</div>
+            <div className="text-lg font-semibold text-slate-900">Top Buys: 30-Day Return to Today</div>
           </div>
           <div className="text-xs text-slate-500">
-            Picks from {backtestStats?.targetDate || '10 days ago'} · Top 5 picks
+            Picks from {backtestStats?.targetDate || 'one month ago'} · Top 5 picks
           </div>
         </div>
         {backtestLoading && (
@@ -809,7 +922,7 @@ export default function Dashboard() {
         {!backtestLoading && backtestStats?.detailRows?.length > 0 && (
           <details className="mt-4">
             <summary className="cursor-pointer text-sm font-semibold text-cyan-700">
-              Show tickers from 10 days ago and current returns
+              Show tickers from one month ago and current returns
             </summary>
             <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white">
               <table className="min-w-full text-sm text-left">
@@ -1025,6 +1138,8 @@ export default function Dashboard() {
                 stock={selectedStock}
                 priceHistory={priceHistory}
                 mlHistory={historicalMlPoints}
+                scoreHistory={scoreHistory}
+                scoreSeriesSelection={scoreSeriesSelection}
               />
             </div>
 
@@ -1167,6 +1282,36 @@ export default function Dashboard() {
                   <div className="font-medium text-slate-900">{formatPct(selectedStock.yield * 100)}</div>
                 </div>
               )}
+            </div>
+
+            <div className="mt-3 bg-white border border-slate-200 rounded-lg p-3">
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Overlay Scores</div>
+              <details>
+                <summary className="cursor-pointer text-sm font-semibold text-cyan-700">
+                  Select score lines
+                </summary>
+                <div className="mt-3 space-y-2 text-sm">
+                  {[
+                    { key: 'tickwise', label: 'TickWise Score' },
+                    { key: 'technical', label: 'Technical Score' },
+                    { key: 'fundamental', label: 'Fundamental Score' },
+                  ].map((item) => (
+                    <label key={item.key} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={scoreSeriesSelection[item.key]}
+                        onChange={(e) =>
+                          setScoreSeriesSelection((prev) => ({
+                            ...prev,
+                            [item.key]: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>{item.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
             </div>
           </div>
         </div>
