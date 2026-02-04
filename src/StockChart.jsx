@@ -23,7 +23,9 @@ const StockChart = ({
   mlForecastP95 = [],
   analystForecast = [],
   mlHistory = [],
-  scoreSeries = []
+  scoreSeries = [],
+  eventMarkers = [],
+  height = 400
 }) => {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
@@ -151,6 +153,16 @@ const StockChart = ({
     const mlLineP95 = mlForecastP95.map(item => [item.time, item.value]);
     const analystLine = analystForecast.map(item => [item.time, item.value]);
     const mlHistoryPoints = mlHistory.map(item => [item.time, item.value]);
+    const legendData = [
+      ticker,
+      ...(mlLine.length ? ['ML Forecast'] : []),
+      ...(mlLineP5.length ? ['ML P5'] : []),
+      ...(mlLineP95.length ? ['ML P95'] : []),
+      ...(mlHistoryPoints.length ? ['ML 1M History'] : []),
+      ...(analystLine.length ? ['Analyst Forecast'] : []),
+      'Volume',
+      ...scoreSeries.map(s => s.name),
+    ];
     
 
 
@@ -224,7 +236,7 @@ const StockChart = ({
       legend: {
         top: 30,
         textStyle: { color: '#334155' },
-        data: [ticker, 'ML Forecast', 'ML P5', 'ML P95', 'ML 1M History', 'Analyst Forecast', 'Volume', ...scoreSeries.map(s => s.name)],
+        data: legendData,
       },
 
       toolbox: {
@@ -331,54 +343,80 @@ const StockChart = ({
             borderColor: '#16a34a',
             borderColor0: '#dc2626',
           },
+          markLine: eventMarkers.length
+            ? {
+                symbol: ['none', 'none'],
+                label: {
+                  color: '#0f172a',
+                  fontSize: 10,
+                },
+                lineStyle: { color: '#f97316', width: 1.5, type: 'dashed' },
+                data: eventMarkers.map((m) => ({
+                  xAxis: m.time,
+                  name: m.label || 'Event',
+                  lineStyle: m.color ? { color: m.color, width: 1.5, type: 'dashed' } : undefined,
+                  label: m.label ? { formatter: m.label } : undefined,
+                })),
+              }
+            : undefined,
           xAxisIndex: 0,
           yAxisIndex: 0,
         },
-        {
-          name: 'ML Forecast',
-          type: 'line',
-          data: mlLine,
-          lineStyle: { color: '#3b82f6', width: 2, type: 'dashed' },
-          smooth: true,
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-        },
-        {
-          name: 'ML P5',
-          type: 'line',
-          data: mlLineP5,
-          lineStyle: { color: '#a855f7', width: 1.5 },
-          smooth: true,
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-        },
-        {
-          name: 'ML P95',
-          type: 'line',
-          data: mlLineP95,
-          lineStyle: { color: '#f97316', width: 1.5 },
-          smooth: true,
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-        },
-        {
-          name: 'Analyst Forecast',
-          type: 'line',
-          data: analystLine,
-          lineStyle: { color: '#10b981', width: 2 },
-          smooth: true,
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-        },
-        {
-          name: 'ML 1M History',
-          type: 'scatter',
-          data: mlHistoryPoints,
-          itemStyle: { color: '#06b6d4', shadowBlur: 8, shadowColor: 'rgba(6, 182, 212, 0.4)' },
-          symbolSize: 8,
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-        },
+        ...(mlLine.length
+          ? [{
+              name: 'ML Forecast',
+              type: 'line',
+              data: mlLine,
+              lineStyle: { color: '#3b82f6', width: 2, type: 'dashed' },
+              smooth: true,
+              xAxisIndex: 0,
+              yAxisIndex: 0,
+            }]
+          : []),
+        ...(mlLineP5.length
+          ? [{
+              name: 'ML P5',
+              type: 'line',
+              data: mlLineP5,
+              lineStyle: { color: '#a855f7', width: 1.5 },
+              smooth: true,
+              xAxisIndex: 0,
+              yAxisIndex: 0,
+            }]
+          : []),
+        ...(mlLineP95.length
+          ? [{
+              name: 'ML P95',
+              type: 'line',
+              data: mlLineP95,
+              lineStyle: { color: '#f97316', width: 1.5 },
+              smooth: true,
+              xAxisIndex: 0,
+              yAxisIndex: 0,
+            }]
+          : []),
+        ...(analystLine.length
+          ? [{
+              name: 'Analyst Forecast',
+              type: 'line',
+              data: analystLine,
+              lineStyle: { color: '#10b981', width: 2 },
+              smooth: true,
+              xAxisIndex: 0,
+              yAxisIndex: 0,
+            }]
+          : []),
+        ...(mlHistoryPoints.length
+          ? [{
+              name: 'ML 1M History',
+              type: 'scatter',
+              data: mlHistoryPoints,
+              itemStyle: { color: '#06b6d4', shadowBlur: 8, shadowColor: 'rgba(6, 182, 212, 0.4)' },
+              symbolSize: 8,
+              xAxisIndex: 0,
+              yAxisIndex: 0,
+            }]
+          : []),
         {
           name: 'Volume',
           type: 'bar',
@@ -425,9 +463,9 @@ const StockChart = ({
     return () => {
       chartInstance.current?.dispose();
     };
-  }, [ticker, priceData, mlForecast, mlForecastP5, mlForecastP95, analystForecast, mlHistory, scoreSeries]);
+  }, [ticker, priceData, mlForecast, mlForecastP5, mlForecastP95, analystForecast, mlHistory, scoreSeries, eventMarkers, height]);
 
-  return <div ref={chartRef} style={{ width: '100%', height: '400px' }} />;
+  return <div ref={chartRef} style={{ width: '100%', height: `${height}px` }} />;
 };
 
 export default StockChart;

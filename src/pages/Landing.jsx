@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PieChart } from 'lucide-react';
+import StockChart from '../StockChart';
 import {
   BarChart2,
   Brain,
@@ -21,115 +22,85 @@ export default function Landing() {
 
     const base = import.meta.env.VITE_GCS_PUBLIC_BASE;
     const scoresUrl = base ? `${base}/today_recommendations.json` : '';
+    const histUrl = base ? `${base}/hist_recommendations.json` : '';
 
-    useEffect(() => {
+
+  useEffect(() => {
     const fetchStocks = async () => {
-        if (!base) {
+      if (!base) {
         console.warn('VITE_GCS_PUBLIC_BASE is not set. Landing preview will be empty.');
         setStocksData([]);
         setLoadingStocks(false);
         return;
-        }
-        try {
+      }
+      try {
         const res = await fetch(scoresUrl);
         if (!res.ok) throw new Error(`Failed to fetch ${scoresUrl}: ${res.status} ${res.statusText}`);
         const json = await res.json();
         setStocksData(Array.isArray(json) ? json : []);
-        } catch (e) {
+      } catch (e) {
         console.error('Landing preview failed to load recommendations:', e);
         setStocksData([]);
-        } finally {
+      } finally {
         setLoadingStocks(false);
-        }
+      }
     };
     fetchStocks();
-    }, [base, scoresUrl]);
+  }, [base, scoresUrl]);
 
-    const topBuys = useMemo(() => {
+  const topBuys = useMemo(() => {
     return stocksData
-        .filter(s => s.recommendation?.toLowerCase() === 'buy')
-        .sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0))
-        .slice(0, 4);
-    }, [stocksData]);
+      .filter(s => s.recommendation?.toLowerCase() === 'buy')
+      .sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0))
+      .slice(0, 4);
+  }, [stocksData]);
 
-    const topSells = useMemo(() => {
+  const topSells = useMemo(() => {
     return stocksData
-        .filter(s => s.recommendation?.toLowerCase() === 'sell')
-        .sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0))
-        .slice(0, 4);
-    }, [stocksData]);
+      .filter(s => s.recommendation?.toLowerCase() === 'sell')
+      .sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0))
+      .slice(0, 4);
+  }, [stocksData]);
 
-    const previewRows = useMemo(() => {
-    // Interleave buys then sells so the preview feels balanced
+  const previewRows = useMemo(() => {
     const rows = [];
     const n = Math.max(topBuys.length, topSells.length);
     for (let i = 0; i < n; i++) {
-        if (topBuys[i]) rows.push(topBuys[i]);
-        if (topSells[i]) rows.push(topSells[i]);
+      if (topBuys[i]) rows.push(topBuys[i]);
+      if (topSells[i]) rows.push(topSells[i]);
     }
-    return rows.slice(0, 10); // up to 10 rows total
-    }, [topBuys, topSells]);
+    return rows.slice(0, 10);
+  }, [topBuys, topSells]);
 
-    const fmtPct = (x) => {
-    const n = Number(x);
-    if (!Number.isFinite(n)) return '—';
-    const sign = n > 0 ? '+' : '';
-    return `${sign}${n.toFixed(1)}%`;
-    };
+  const normalizeToISODate = (value) => {
+    if (value == null) return "";
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return value.toISOString().slice(0, 10);
+    }
+    const s = String(value).trim();
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const n = Number(s);
+      const ms = n >= 1e11 ? n : n * 1000;
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+    }
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 10);
+  };
 
-    const get1mAiPct = (stock) => {
-    const close = Number(stock.Close);
-    const p95 = Number(stock.forecast1m_p95);
-    if (!Number.isFinite(close) || close === 0 || !Number.isFinite(p95)) return null;
-    return ((p95 - close) * 100) / close;
-    };
+  const addDays = (dateLike, days) => {
+    const iso = normalizeToISODate(dateLike);
+    if (!iso) return dateLike;
+    const d = new Date(iso);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
 
-    const previewStock = useMemo(() => {
-    // Prefer the top buy; fall back to top sell; else null
-    return topBuys?.[0] || topSells?.[0] || null;
-    }, [topBuys, topSells]);
-
-    const previewTicker = previewStock?.ticker || null;
-
-    const [previewHistory, setPreviewHistory] = useState([]);
-    const [previewLoading, setPreviewLoading] = useState(false);
-
-    useEffect(() => {
-    const run = async () => {
-        if (!base || !previewTicker) {
-        setPreviewHistory([]);
-        return;
-        }
-
-        setPreviewLoading(true);
-        try {
-        const historyUrl = `${base}/data/${previewTicker}.json`;
-        const res = await fetch(historyUrl);
-        if (!res.ok) throw new Error(`Failed to fetch ${historyUrl}: ${res.status} ${res.statusText}`);
-        const json = await res.json();
-
-        // Convert to closes array
-        const closes = Array.isArray(json)
-            ? json
-                .map((row) => Number(row.Close ?? row.close))
-                .filter((v) => Number.isFinite(v))
-                .slice(-60) // last ~60 points
-            : [];
-
-        setPreviewHistory(closes);
-        } catch (e) {
-        console.error('Preview history load failed:', e);
-        setPreviewHistory([]);
-        } finally {
-        setPreviewLoading(false);
-        }
-    };
-
-    run();
-    }, [base, previewTicker]);
-
-
-
+  const getHistDate = (row) =>
+    normalizeToISODate(
+      row?.Date_y ?? row?.Date_x ?? row?.analysis_date ?? row?.date ?? row?.Date ?? row?.time
+    );
   const stats = useMemo(
     () => [
       { label: 'Signals combined', value: 'Fundamental + Technical + Sentiment + AI' },
@@ -138,8 +109,259 @@ export default function Landing() {
     ],
     []
   );
+  const fmtPct = (x) => {
+    const n = Number(x);
+    if (!Number.isFinite(n)) return '�';
+    const sign = n > 0 ? '+' : '';
+    return `${sign}${n.toFixed(1)}%`;
+  };
 
-  return (
+  const get1mAiPct = (stock) => {
+    const close = Number(stock.Close);
+    const p95 = Number(stock.forecast1m_p95);
+    if (!Number.isFinite(close) || close === 0 || !Number.isFinite(p95)) return null;
+    return ((p95 - close) * 100) / close;
+  };
+
+  const previewStock = useMemo(() => {
+    return topBuys?.[0] || topSells?.[0] || null;
+  }, [topBuys, topSells]);
+
+  const previewTicker = previewStock?.ticker || null;
+
+  const [histData, setHistData] = useState([]);
+  const [backtestPick, setBacktestPick] = useState(null);
+  const [backtestPrice, setBacktestPrice] = useState([]);
+  const [backtestPriceTicker, setBacktestPriceTicker] = useState('');
+  const [backtestScoreSeries, setBacktestScoreSeries] = useState([]);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestSummary, setBacktestSummary] = useState(null);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      if (!base) {
+        setHistData([]);
+        return;
+      }
+      try {
+        const res = await fetch(histUrl);
+        if (!res.ok) throw new Error(`Failed to fetch ${histUrl}: ${res.status} ${res.statusText}`);
+        const json = await res.json();
+        setHistData(Array.isArray(json) ? json : []);
+      } catch (e) {
+        console.error('Landing history failed to load:', e);
+        setHistData([]);
+      }
+    };
+    fetchHistory();
+  }, [base, histUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!Array.isArray(histData) || histData.length === 0 || !base) {
+        setBacktestPick(null);
+        setBacktestScoreSeries([]);
+        return;
+      }
+
+      const buys = histData
+        .map((row) => ({ row, date: getHistDate(row) }))
+        .filter((x) => x.date && x.row?.recommendation?.toLowerCase() === 'buy');
+
+      const dates = Array.from(new Set(buys.map((b) => b.date))).sort();
+      if (!dates.length) {
+        setBacktestPick(null);
+        setBacktestScoreSeries([]);
+        return;
+      }
+
+      const targetAnchor = addDays(new Date(), -30);
+      let targetDate = dates[0];
+      for (let i = 0; i < dates.length; i += 1) {
+        if (dates[i] <= targetAnchor) targetDate = dates[i];
+      }
+
+      const dayRows = buys.filter((b) => b.date === targetDate).map((b) => b.row);
+      dayRows.sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0));
+      const unique = new Map();
+      dayRows.forEach((r) => {
+        const t = r?.ticker;
+        if (!t) return;
+        if (!unique.has(t)) unique.set(t, r);
+      });
+      const candidates = Array.from(unique.values()).slice(0, 5);
+      if (!candidates.length) {
+        setBacktestPick(null);
+        setBacktestScoreSeries([]);
+        return;
+      }
+
+      const buildHistoryMap = (rows) => {
+        const byDate = new Map();
+        rows.forEach((r) => {
+          const t = normalizeToISODate(r?.date ?? r?.Date ?? r?.time ?? r?.Time);
+          const c = Number(r?.Close ?? r?.close);
+          if (!t || !Number.isFinite(c)) return;
+          byDate.set(t, c);
+        });
+        const datesArr = Array.from(byDate.keys()).sort();
+        return { byDate, dates: datesArr };
+      };
+
+      const findCloseAtOrBefore = (datesArr, byDate, target) => {
+        if (!datesArr.length) return null;
+        let lo = 0;
+        let hi = datesArr.length - 1;
+        let best = null;
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2);
+          const d = datesArr[mid];
+          if (d <= target) {
+            best = d;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        return best ? byDate.get(best) : null;
+      };
+
+      setBacktestLoading(true);
+      try {
+        const results = await Promise.all(
+          candidates.map(async (row) => {
+            try {
+              const historyUrl = `${base}/data/${row.ticker}.json`;
+              const res = await fetch(historyUrl);
+              if (!res.ok) throw new Error(`Failed to fetch ${historyUrl}`);
+              const json = await res.json();
+              const formatted = Array.isArray(json)
+                ? json
+                    .map((item) => ({
+                      time: normalizeToISODate(item.date ?? item.Date ?? item.time ?? item.Time),
+                      open: Number(item.Open),
+                      high: Number(item.High),
+                      low: Number(item.Low),
+                      close: Number(item.Close),
+                      volume: Number(item.Volume) || 0,
+                    }))
+                    .filter((r) => r.time)
+                : [];
+              const map = buildHistoryMap(formatted);
+              const entryClose = Number(row.Close);
+              const entryPrice =
+                Number.isFinite(entryClose)
+                  ? entryClose
+                  : findCloseAtOrBefore(map.dates, map.byDate, targetDate);
+              if (!Number.isFinite(entryPrice)) return null;
+              const latestDate = map.dates[map.dates.length - 1];
+              const latestClose = latestDate ? map.byDate.get(latestDate) : null;
+              if (!Number.isFinite(latestClose)) return null;
+              const currentReturn = ((latestClose - entryPrice) * 100) / entryPrice;
+              return { row, date: targetDate, currentReturn, formatted };
+            } catch (e) {
+              console.error('Backtest candidate load failed:', row?.ticker, e);
+              return null;
+            }
+          })
+        );
+
+        const valid = results.filter((r) => r && Number.isFinite(r.currentReturn));
+        if (!valid.length) {
+          setBacktestPick(null);
+          setBacktestScoreSeries([]);
+          setBacktestSummary(null);
+          return;
+        }
+
+        const returns = valid.map((v) => v.currentReturn);
+        const avg = returns.reduce((s, v) => s + v, 0) / returns.length;
+        const sorted = [...returns].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        const wins = returns.filter((r) => r > 0).length;
+        setBacktestSummary({
+          avg,
+          median,
+          winRate: (wins / returns.length) * 100,
+          sample: returns.length,
+          date: targetDate,
+        });
+
+        valid.sort((a, b) => b.currentReturn - a.currentReturn);
+        const best = valid[0];
+        if (cancelled) return;
+
+        setBacktestPick({ date: best.date, row: best.row });
+        setBacktestPrice(best.formatted || []);
+        setBacktestPriceTicker(best.row.ticker);
+
+        const scoreSeries = histData
+          .filter((r) => r?.ticker === best.row.ticker)
+          .map((r) => ({
+            time: getHistDate(r),
+            value: Number(r.tickwise_score),
+          }))
+          .filter((p) => p.time && Number.isFinite(p.value))
+          .sort((a, b) => (a.time < b.time ? -1 : 1));
+
+        setBacktestScoreSeries(scoreSeries);
+      } finally {
+        if (!cancelled) setBacktestLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [histData, base]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!base || !backtestPick?.row?.ticker) {
+        setBacktestPrice([]);
+        return;
+      }
+      if (backtestPriceTicker === backtestPick.row.ticker && backtestPrice.length) {
+        return;
+      }
+      setBacktestLoading(true);
+      try {
+        const historyUrl = `${base}/data/${backtestPick.row.ticker}.json`;
+        const res = await fetch(historyUrl);
+        if (!res.ok) throw new Error(`Failed to fetch ${historyUrl}: ${res.status} ${res.statusText}`);
+        const json = await res.json();
+        const formatted = Array.isArray(json)
+          ? json
+              .map((item) => {
+                const rawTime = item.date ?? item.Date ?? item.time ?? item.Time;
+                const dateStr = normalizeToISODate(rawTime);
+                return {
+                  time: dateStr,
+                  open: Number(item.Open),
+                  high: Number(item.High),
+                  low: Number(item.Low),
+                  close: Number(item.Close),
+                  volume: Number(item.Volume) || 0,
+                };
+              })
+              .filter((r) => r.time)
+          : [];
+
+        setBacktestPrice(formatted);
+        setBacktestPriceTicker(backtestPick.row.ticker);
+      } catch (e) {
+        console.error('Backtest preview history load failed:', e);
+        setBacktestPrice([]);
+      } finally {
+        setBacktestLoading(false);
+      }
+    };
+
+    run();
+  }, [base, backtestPick, backtestPrice, backtestPriceTicker]);  return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-white text-slate-900 relative overflow-hidden">
       {/* Background blobs */}
       <div className="pointer-events-none absolute -top-28 -left-28 h-[420px] w-[420px] rounded-full bg-blue-200/40 blur-3xl" />
@@ -254,6 +476,52 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Backtest summary */}
+      <section className="max-w-6xl mx-auto px-6 pb-10">
+        <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">Backtest Snapshot</div>
+              <div className="text-lg font-semibold">Top Buys from one month ago</div>
+            </div>
+            <div className="text-xs text-slate-500">
+              {backtestSummary?.date ? `As of ${backtestSummary.date}` : 'Loading history'}
+            </div>
+          </div>
+          {backtestLoading && (
+            <div className="text-sm text-slate-600">Calculating recent performance…</div>
+          )}
+          {!backtestLoading && backtestSummary && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <div className="text-xs text-emerald-700">Avg Return</div>
+                <div className="mt-1 text-2xl font-semibold text-emerald-900">
+                  {fmtPct(backtestSummary.avg)}
+                </div>
+              </div>
+              <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-4">
+                <div className="text-xs text-cyan-700">Median Return</div>
+                <div className="mt-1 text-2xl font-semibold text-cyan-900">
+                  {fmtPct(backtestSummary.median)}
+                </div>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                <div className="text-xs text-amber-700">Win Rate</div>
+                <div className="mt-1 text-2xl font-semibold text-amber-900">
+                  {fmtPct(backtestSummary.winRate)}
+                </div>
+                <div className="text-xs text-amber-700 mt-1">
+                  Sample size: {backtestSummary.sample}
+                </div>
+              </div>
+            </div>
+          )}
+          {!backtestLoading && !backtestSummary && (
+            <div className="text-sm text-slate-600">Not enough data for a backtest snapshot.</div>
+          )}
+        </div>
+      </section>
+
       {/* Product preview */}
       <section className="max-w-6xl mx-auto px-6 pb-16">
         <div className="rounded-3xl border border-slate-200 bg-white/70 backdrop-blur shadow-sm overflow-hidden">
@@ -327,71 +595,83 @@ export default function Landing() {
             <div className="lg:col-span-2 p-6 border-t lg:border-t-0 lg:border-l border-slate-200">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xs text-slate-500">Example ticker</div>
-                  <div className="text-lg font-semibold">{previewTicker}</div>
+                  <div className="text-xs text-slate-500">Backtest top pick</div>
+                  <div className="text-lg font-semibold">{backtestPick?.row?.ticker || "—"}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-2 text-xs text-slate-600">
-                    <span className="h-2 w-2 rounded-full bg-blue-500" />
-                    ML
+                    <span className="h-2 w-2 rounded-full bg-orange-400" />
+                    Buy trigger
                   </span>
                   <span className="inline-flex items-center gap-2 text-xs text-slate-600">
-                    <span className="h-2 w-2 rounded-full bg-orange-400" />
-                    Analyst
+                    <span className="h-2 w-2 rounded-full bg-sky-500" />
+                    TickWise score
                   </span>
                 </div>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                {/* Faux chart */}
-                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-xs text-slate-500 mb-2">
-                    {previewTicker ? `Preview: ${previewTicker} (last 60 closes)` : 'Preview'}
+                  {backtestPick
+                    ? `Backtest top pick: ${backtestPick.row.ticker} (buy on ${backtestPick.date})`
+                    : 'Backtest preview'}
                 </div>
 
-                {previewLoading ? (
-                    <div className="h-[140px] rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white animate-pulse" />
+                {backtestLoading ? (
+                  <div className="h-[180px] rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white animate-pulse" />
+                ) : backtestPick && backtestPrice.length ? (
+                  <StockChart
+                    ticker={backtestPick.row.ticker}
+                    priceData={backtestPrice}
+                    mlForecast={[]}
+                    mlForecastP5={[]}
+                    mlForecastP95={[]}
+                    analystForecast={[]}
+                    mlHistory={[]}
+                    scoreSeries={[
+                      {
+                        name: 'TickWise Score',
+                        color: '#0ea5e9',
+                        data: backtestScoreSeries.map((p) => [p.time, p.value]),
+                      },
+                    ]}
+                    eventMarkers={[{ time: backtestPick.date, label: 'Buy', color: '#f97316' }]}
+                    height={240}
+                  />
                 ) : (
-                    <Sparkline values={previewHistory} />
+                  <div className="h-[180px] rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white grid place-items-center text-xs text-slate-500">
+                    Backtest preview unavailable
+                  </div>
                 )}
 
-                {/* Optional: show current signal metrics from the previewStock */}
                 <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
-                    <Metric
-                    label="Sentiment"
-                    value={
-                        Number.isFinite(Number(previewStock?.sentiment))
-                        ? `${Number(previewStock.sentiment).toFixed(1)}%`
-                        : '—'
-                    }
-                    tone="good"
-                    />
-                    <Metric
-                    label="Technical"
-                    value={
-                        Number.isFinite(Number(previewStock?.technical))
-                        ? `${Number(previewStock.technical).toFixed(1)}%`
-                        : '—'
-                    }
-                    tone="good"
-                    />
-                    <Metric
+                  <Metric
                     label="TickWise"
                     value={
-                        Number.isFinite(Number(previewStock?.tickwise_score))
-                        ? `${Number(previewStock.tickwise_score).toFixed(0)}`
+                      Number.isFinite(Number(backtestPick?.row?.tickwise_score))
+                        ? `${Number(backtestPick.row.tickwise_score).toFixed(0)}`
                         : '—'
                     }
                     tone="good"
-                    />
-                </div>
-                </div>
-
-
-                <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
-                  <Metric label="Sentiment" value="Bullish" tone="good" />
-                  <Metric label="Technical" value="Strong" tone="good" />
-                  <Metric label="Forecast" value="Uptrend" tone="good" />
+                  />
+                  <Metric
+                    label="Technical"
+                    value={
+                      Number.isFinite(Number(backtestPick?.row?.technical))
+                        ? `${Number(backtestPick.row.technical).toFixed(1)}%`
+                        : '—'
+                    }
+                    tone="good"
+                  />
+                  <Metric
+                    label="Fundamental"
+                    value={
+                      Number.isFinite(Number(backtestPick?.row?.fundamental_score))
+                        ? `${Number(backtestPick.row.fundamental_score).toFixed(1)}%`
+                        : '—'
+                    }
+                    tone="good"
+                  />
                 </div>
               </div>
 
@@ -579,7 +859,7 @@ export default function Landing() {
           >
             AI Stock Analysis
           </button>
-          <span className="hidden sm:inline">�</span>
+          <span className="hidden sm:inline">�</span>
           <button
             onClick={() => navigate('/stock-analysis-tools/')}
             className="hover:text-slate-700"
@@ -587,14 +867,13 @@ export default function Landing() {
             Stock Analysis Tools
           </button>
         </div>
-        <div className="mt-2">Copyright {new Date().getFullYear()} TickWise � AI-Powered Market Intelligence</div>
+        <div className="mt-2">Copyright {new Date().getFullYear()} TickWise � AI-Powered Market Intelligence</div>
       </footer>
     </div>
   );
 }
 
-function FeatureCard({ icon, title, text }) {
-  return (
+function FeatureCard({ icon, title, text }) {  return (
     <div className="bg-white/80 backdrop-blur rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition">
       <div className="h-12 w-12 rounded-2xl bg-blue-50 text-blue-600 grid place-items-center mb-4">
         {icon}
@@ -605,8 +884,7 @@ function FeatureCard({ icon, title, text }) {
   );
 }
 
-function Step({ n, title, text }) {
-  return (
+function Step({ n, title, text }) {  return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="text-xs font-semibold text-slate-500">{n}</div>
       <div className="mt-2 text-lg font-semibold">{title}</div>
@@ -624,7 +902,7 @@ function SignalChip({ value }) {
       ? 'bg-red-50 text-red-700 border-red-200'
       : 'bg-slate-50 text-slate-700 border-slate-200';
 
-  return (
+                return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${cls}`}>
       {value}
     </span>
@@ -639,7 +917,7 @@ function Metric({ label, value, tone }) {
       ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
       : 'bg-slate-50 text-slate-700 border-slate-200';
 
-  return (
+                return (
     <div className={`rounded-xl border ${toneCls} px-3 py-2`}>
       <div className="text-[11px] opacity-80">{label}</div>
       <div className="text-xs font-semibold">{value}</div>
@@ -647,8 +925,7 @@ function Metric({ label, value, tone }) {
   );
 }
 
-function FaqItem({ q, a }) {
-  return (
+function FaqItem({ q, a }) {  return (
     <div className="rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-6 shadow-sm">
       <div className="font-semibold">{q}</div>
       <div className="mt-2 text-sm text-slate-600 leading-relaxed">{a}</div>
@@ -658,8 +935,7 @@ function FaqItem({ q, a }) {
 
 
 function Sparkline({ values, height = 140, padding = 8 }) {
-  if (!values || values.length < 2) {
-    return (
+  if (!values || values.length < 2) {  return (
       <div className="h-[140px] rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white" />
     );
   }
@@ -683,7 +959,7 @@ function Sparkline({ values, height = 140, padding = 8 }) {
   const first = values[0];
   const up = last >= first;
 
-  return (
+                return (
     <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[140px] rounded-xl border border-slate-100 bg-white">
       <defs>
         <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
@@ -704,4 +980,34 @@ function Sparkline({ values, height = 140, padding = 8 }) {
     </svg>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
