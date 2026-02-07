@@ -386,6 +386,8 @@ export default function Dashboard() {
   const [loadingHist, setLoadingHist] = useState(true);
   const [backtestStats, setBacktestStats] = useState(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestLookbackDays, setBacktestLookbackDays] = useState(30);
+  const [backtestTopCount, setBacktestTopCount] = useState(5);
 
   // Environment variable for the container SAS URL. Should look like
   // "https://<account>.blob.core.windows.net/<container>?<sas>".
@@ -506,7 +508,7 @@ export default function Dashboard() {
         });
 
         const dates = Array.from(byDate.keys()).sort();
-        const targetAnchor = addDays(new Date(), -30);
+        const targetAnchor = addDays(new Date(), -backtestLookbackDays);
         const targetDate = (() => {
           if (!dates.length) return null;
           let lo = 0;
@@ -532,7 +534,7 @@ export default function Dashboard() {
           if (!ticker) return;
           if (!unique.has(ticker)) unique.set(ticker, r);
         });
-        const picks = Array.from(unique.values()).slice(0, 5).map((r) => ({ date: targetDate, row: r }));
+        const picks = Array.from(unique.values()).slice(0, backtestTopCount).map((r) => ({ date: targetDate, row: r }));
 
         const tickers = Array.from(new Set(picks.map((p) => p.row?.ticker).filter(Boolean)));
         const historyCache = new Map();
@@ -593,8 +595,8 @@ export default function Dashboard() {
           avg,
           median,
           winRate: (wins / returns.length) * 100,
-          windowDays: 30,
-          picksPerDay: 10,
+          windowDays: backtestLookbackDays,
+          picksPerDay: backtestTopCount,
           targetDate,
           detailRows,
         });
@@ -604,7 +606,7 @@ export default function Dashboard() {
     };
 
     run();
-  }, [histData, base]);
+  }, [histData, base, backtestLookbackDays, backtestTopCount]);
 
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
@@ -878,13 +880,41 @@ export default function Dashboard() {
       </div>
 
       <div className="mb-6 bg-white/90 border border-slate-200 rounded-2xl p-5 shadow-sm backdrop-blur">
-        <div className="flex items-center justify-between gap-4 mb-3">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-3">
           <div>
             <div className="text-sm text-slate-500">Backtest snapshot</div>
-            <div className="text-lg font-semibold text-slate-900">Top Buys: 30-Day Return to Today</div>
+            <div className="text-lg font-semibold text-slate-900">
+              Top Buys: {backtestLookbackDays}-Day Return to Today
+            </div>
           </div>
-          <div className="text-xs text-slate-500">
-            Picks from {backtestStats?.targetDate || 'one month ago'} Â· Top 5 picks
+          <div className="flex items-center gap-3">
+                        <label className="text-xs text-slate-500">Lookback</label>
+            <select
+              value={backtestLookbackDays}
+              onChange={(e) => setBacktestLookbackDays(Number(e.target.value))}
+              className="border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+            >
+              {[5, 6, 7, 8, 9, 10, 12, 14, 16, 19, 21, 30, 45, 60, 90, 120].map((d) => (
+                <option key={d} value={d}>
+                  {d} days
+                </option>
+              ))}
+            </select>
+            <label className="text-xs text-slate-500">Top</label>
+            <select
+              value={backtestTopCount}
+              onChange={(e) => setBacktestTopCount(Number(e.target.value))}
+              className="border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+            >
+              {[3, 5, 7, 10, 15].map((n) => (
+                <option key={n} value={n}>
+                  {n} stocks
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-slate-500">
+              Picks from {backtestStats?.targetDate || `${backtestLookbackDays} days ago`} · Top {backtestTopCount} picks
+            </div>
           </div>
         </div>
         {backtestLoading && (
@@ -1341,3 +1371,4 @@ export default function Dashboard() {
     </main>
   );
 }
+
