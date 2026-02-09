@@ -388,7 +388,10 @@ export default function Dashboard() {
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestLookbackDays, setBacktestLookbackDays] = useState(30);
   const [backtestTopCount, setBacktestTopCount] = useState(5);
-
+  const [backtestUseTechStop, setBacktestUseTechStop] = useState(false);
+  const [backtestTechThreshold, setBacktestTechThreshold] = useState(70);
+  const [backtestUseTrailingStop, setBacktestUseTrailingStop] = useState(false);
+  const [backtestTrailingStopPct, setBacktestTrailingStopPct] = useState(8);
   // Environment variable for the container SAS URL. Should look like
   // "https://<account>.blob.core.windows.net/<container>?<sas>".
   // const containerSasUrl = import.meta.env.VITE_CONTAINER_SAS_URL;
@@ -472,6 +475,45 @@ export default function Dashboard() {
       const dates = Array.from(byDate.keys()).sort();
       return { byDate, dates };
     };
+        const buildTechnicalMap = (rows, ticker) => {
+          const techByDate = new Map();
+          rows.forEach((r) => {
+            if (r?.ticker !== ticker) return;
+            const t = normalizeToISODate(r?.Date_y ?? r?.Date_x ?? r?.analysis_date ?? r?.date ?? r?.Date);
+            const v = Number(r?.technical);
+            if (!t || !Number.isFinite(v)) return;
+            techByDate.set(t, v);
+          });
+          const dates = Array.from(techByDate.keys()).sort();
+          return { techByDate, dates };
+        };
+
+        const findFirstTechDrop = (techDates, techByDate, startDate, threshold) => {
+          for (let i = 0; i < techDates.length; i += 1) {
+            const d = techDates[i];
+            if (d < startDate) continue;
+            const v = techByDate.get(d);
+            if (v != null && v < threshold) return d;
+          }
+          return null;
+        };
+        const findTrailingStopExit = (dates, byDate, startDate, pct) => {
+          if (!dates.length) return null;
+          let maxPrice = null;
+          for (let i = 0; i < dates.length; i += 1) {
+            const d = dates[i];
+            if (d < startDate) continue;
+            const price = byDate.get(d);
+            if (!Number.isFinite(price)) continue;
+            if (maxPrice == null || price > maxPrice) {
+              maxPrice = price;
+              continue;
+            }
+            const stopPrice = maxPrice * (1 - pct / 100);
+            if (price <= stopPrice) return d;
+          }
+          return null;
+        };
 
     const findCloseAtOrBefore = (dates, byDate, target) => {
       if (!dates.length) return null;
@@ -538,7 +580,7 @@ export default function Dashboard() {
 
         const tickers = Array.from(new Set(picks.map((p) => p.row?.ticker).filter(Boolean)));
         const historyCache = new Map();
-
+        const technicalCache = new Map();
         await Promise.all(
           tickers.map(async (ticker) => {
             try {
@@ -548,6 +590,8 @@ export default function Dashboard() {
               const json = await res.json();
               const map = buildHistoryMap(Array.isArray(json) ? json : []);
               historyCache.set(ticker, map);
+              const techMap = buildTechnicalMap(histData, ticker);
+              technicalCache.set(ticker, techMap);
             } catch (e) {
               console.error('Backtest history load failed:', ticker, e);
             }
@@ -565,10 +609,43 @@ export default function Dashboard() {
           const entryPrice =
             Number.isFinite(entryClose) ? entryClose : findCloseAtOrBefore(hist.dates, hist.byDate, date);
           if (!Number.isFinite(entryPrice)) return;
-          const latestDate = hist.dates[hist.dates.length - 1];
+                    const latestDate = hist.dates[hist.dates.length - 1];
           const latestClose = latestDate ? hist.byDate.get(latestDate) : null;
           if (!Number.isFinite(latestClose)) return;
-          const r = ((latestClose - entryPrice) * 100) / entryPrice;
+                    let exitPrice = latestClose;
+          let exitDate = latestDate;
+          const exits = [];
+
+          if (backtestUseTechStop) {
+            const tech = technicalCache.get(ticker);
+            if (tech?.dates?.length) {
+              const sellDate = findFirstTechDrop(tech.dates, tech.techByDate, date, backtestTechThreshold);
+              if (sellDate) {
+                const sellPrice = findCloseAtOrBefore(hist.dates, hist.byDate, sellDate);
+                if (Number.isFinite(sellPrice)) {
+                  exits.push({ date: sellDate, price: sellPrice });
+                }
+              }
+            }
+          }
+
+          if (backtestUseTrailingStop) {
+            const sellDate = findTrailingStopExit(hist.dates, hist.byDate, date, backtestTrailingStopPct);
+            if (sellDate) {
+              const sellPrice = findCloseAtOrBefore(hist.dates, hist.byDate, sellDate);
+              if (Number.isFinite(sellPrice)) {
+                exits.push({ date: sellDate, price: sellPrice });
+              }
+            }
+          }
+
+          if (exits.length) {
+            exits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+            exitDate = exits[0].date;
+            exitPrice = exits[0].price;
+          }
+
+          const r = ((exitPrice - entryPrice) * 100) / entryPrice;
           returns.push(r);
 
           const currentReturn = r;
@@ -576,8 +653,9 @@ export default function Dashboard() {
             date,
             ticker,
             entryPrice,
-            latestClose,
+            latestClose: exitPrice,
             currentReturn,
+            exitDate,
           });
         });
 
@@ -606,7 +684,7 @@ export default function Dashboard() {
     };
 
     run();
-  }, [histData, base, backtestLookbackDays, backtestTopCount]);
+  }, [histData, base, backtestLookbackDays, backtestTopCount, backtestUseTechStop, backtestTechThreshold, backtestUseTrailingStop, backtestTrailingStopPct]);
 
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
@@ -752,18 +830,18 @@ export default function Dashboard() {
   }, [histData, selectedTicker]);
   const formatPct = (value) => {
     const n = Number(value);
-    if (isNaN(n)) return '—';
+    if (isNaN(n)) return '-';
     const sign = n > 0 ? '+' : '';
     return `${sign}${n.toFixed(1)}%`;
   };
   const formatNum = (value, digits = 2) => {
     const n = Number(value);
-    if (isNaN(n)) return '—';
+    if (isNaN(n)) return '-';
     return n.toFixed(digits);
   };
   const formatPrice = (value) => {
     const n = Number(value);
-    if (isNaN(n)) return '—';
+    if (isNaN(n)) return '-';
     return `$${n.toFixed(2)}`;
   };
   const signalBadgeClass = (value) => {
@@ -887,8 +965,8 @@ export default function Dashboard() {
               Top Buys: {backtestLookbackDays}-Day Return to Today
             </div>
           </div>
-          <div className="flex items-center gap-3">
-                        <label className="text-xs text-slate-500">Lookback</label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-xs text-slate-500">Lookback</label>
             <select
               value={backtestLookbackDays}
               onChange={(e) => setBacktestLookbackDays(Number(e.target.value))}
@@ -912,8 +990,50 @@ export default function Dashboard() {
                 </option>
               ))}
             </select>
+                        <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={backtestUseTechStop}
+                  onChange={(e) => setBacktestUseTechStop(e.target.checked)}
+                />
+                Sell on Technical threshold
+              </label>
+              {backtestUseTechStop && (
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={backtestTechThreshold}
+                  onChange={(e) => setBacktestTechThreshold(Number(e.target.value))}
+                  className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                  aria-label="Technical threshold"
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={backtestUseTrailingStop}
+                  onChange={(e) => setBacktestUseTrailingStop(e.target.checked)}
+                />
+                Trailing stop (%)
+              </label>
+              {backtestUseTrailingStop && (
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={backtestTrailingStopPct}
+                  onChange={(e) => setBacktestTrailingStopPct(Number(e.target.value))}
+                  className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                  aria-label="Trailing stop percent"
+                />
+              )}
+            </div>
             <div className="text-xs text-slate-500">
-              Picks from {backtestStats?.targetDate || `${backtestLookbackDays} days ago`} � Top {backtestTopCount} picks
+              Picks from {backtestStats?.targetDate || `${backtestLookbackDays} days ago`} - Top {backtestTopCount} picks
             </div>
           </div>
         </div>
@@ -952,16 +1072,17 @@ export default function Dashboard() {
         {!backtestLoading && backtestStats?.detailRows?.length > 0 && (
           <details className="mt-4">
             <summary className="cursor-pointer text-sm font-semibold text-cyan-700">
-              Show tickers from one month ago and current returns
+              {`Show tickers from ${backtestStats?.targetDate || `${backtestLookbackDays} days ago`} and current returns`}
             </summary>
             <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white">
               <table className="min-w-full text-sm text-left">
-                <thead className="bg-slate-100 text-slate-700">
+                                <thead className="bg-slate-100 text-slate-700">
                   <tr>
                     <th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2">Ticker</th>
                     <th className="px-3 py-2">Entry</th>
-                    <th className="px-3 py-2">Latest Close</th>
+                    <th className="px-3 py-2">Exit Date</th>
+                    <th className="px-3 py-2">Exit Price</th>
                     <th className="px-3 py-2">Return to Today %</th>
                   </tr>
                 </thead>
@@ -975,10 +1096,12 @@ export default function Dashboard() {
                           <td className="px-3 py-2">{row.date}</td>
                           <td className="px-3 py-2 font-medium">{row.ticker}</td>
                           <td className="px-3 py-2">{formatPrice(row.entryPrice)}</td>
+                          <td className="px-3 py-2">{row.exitDate || '-'}</td>
                           <td className="px-3 py-2">{formatPrice(row.latestClose)}</td>
                           <td className={`px-3 py-2 font-semibold ${isPos ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {row.currentReturn == null ? '—' : formatPct(row.currentReturn)}
+                            {row.currentReturn == null ? '-' : formatPct(row.currentReturn)}
                           </td>
+
                         </tr>
                       );
                     })}
@@ -1201,7 +1324,7 @@ export default function Dashboard() {
                   <div className="text-slate-500">Recommendation</div>
                   <div className="font-medium text-slate-900">
                     <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.recommendation)}`}>
-                      {selectedStock.recommendation || '—'}
+                      {selectedStock.recommendation || '-'}
                     </span>
                   </div>
                   <div className="text-slate-500">TickWise Score</div>
@@ -1262,7 +1385,7 @@ export default function Dashboard() {
                     <div className="text-slate-500">Momentum Signal</div>
                     <div className="font-medium text-slate-900">
                       <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.signal_momentum)}`}>
-                        {selectedStock.signal_momentum ?? '—'}
+                        {selectedStock.signal_momentum ?? '-'}
                       </span>
                     </div>
                   </div>
@@ -1288,10 +1411,10 @@ export default function Dashboard() {
                     <div className="text-slate-500">MA Signals</div>
                     <div className="font-medium text-slate-900 flex gap-2">
                       <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.signal_sma_10)}`}>
-                        {selectedStock.signal_sma_10 ?? '—'}
+                        {selectedStock.signal_sma_10 ?? '-'}
                       </span>
                       <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded border ${signalBadgeClass(selectedStock.signal_ema_10)}`}>
-                        {selectedStock.signal_ema_10 ?? '—'}
+                        {selectedStock.signal_ema_10 ?? '-'}
                       </span>
                     </div>
                   </div>
@@ -1371,4 +1494,30 @@ export default function Dashboard() {
     </main>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

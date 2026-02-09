@@ -442,7 +442,7 @@ export default function Landing() {
         </h1>
 
         <p className="mt-4 text-lg md:text-xl text-slate-600 max-w-3xl mx-auto">
-          TickWise analyzes market sentiment, fundamental data, technical signals, and AI forecasts
+          TickWise analyzes fundamental data, technical signals, and AI forecasts
           to deliver clear Buy / Hold / Sell insights — daily.
         </p>
 
@@ -739,8 +739,8 @@ export default function Landing() {
             />
             <FeatureCard
                 icon={<BarChart2 size={22} />}
-                title="News Sentiment"
-                text="FinBERT analyzes market news to quantify bullish and bearish sentiment."
+                title="Analysts Forecast"
+                text="Consensus analyst price targets provide a long‑horizon reality check, letting you compare ML signals against Wall Street expectations."
             />
             <FeatureCard
                 icon={<PieChart size={22} />}
