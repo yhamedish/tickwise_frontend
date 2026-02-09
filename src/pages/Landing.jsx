@@ -372,8 +372,12 @@ export default function Landing() {
       <header className="max-w-6xl mx-auto px-6 pt-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-slate-900 text-white grid place-items-center font-bold shadow-sm">
-              T
+            <div className="h-16 w-16 rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+              <img
+                src="/tickwise_logo.png"
+                alt="TickWise logo"
+                className="h-full w-full object-cover"
+              />
             </div>
             <div className="leading-tight">
               <div className="font-semibold tracking-tight">TickWise</div>

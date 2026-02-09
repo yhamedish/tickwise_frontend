@@ -904,6 +904,24 @@ export default function Dashboard() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 via-slate-50 to-cyan-50 text-slate-900 p-6">
+      <header className="max-w-6xl mx-auto mb-6">
+        <div className="flex items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-3">
+            <div className="h-16 w-16 rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+              <img
+                src="/tickwise_logo.png"
+                alt="TickWise logo"
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <div className="leading-tight">
+              <div className="font-semibold tracking-tight text-slate-900">TickWise</div>
+              <div className="text-xs text-slate-500">AI Powered Market Intelligence</div>
+            </div>
+          </a>
+          <a href="/" className="text-sm text-slate-600 hover:text-slate-900">Home</a>
+        </div>
+      </header>
       {loadingStocks && (
         <p className="text-center text-gray-600 mb-4">Loading stock recommendations...</p>
       )}
