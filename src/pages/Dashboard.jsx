@@ -396,6 +396,7 @@ export default function Dashboard() {
   const [backtestUseTakeProfit, setBacktestUseTakeProfit] = useState(false);
   const [backtestTakeProfitPct, setBacktestTakeProfitPct] = useState(20);
   const [backtestRequireRisingAbove70, setBacktestRequireRisingAbove70] = useState(false);
+  const [backtestResultTab, setBacktestResultTab] = useState('summary');
   const [backtestSeries, setBacktestSeries] = useState([]);
   const [predictionAccuracy, setPredictionAccuracy] = useState({
     correct: 0,
@@ -1192,6 +1193,24 @@ export default function Dashboard() {
   const predictionAccuracyPct = predictionAccuracy.total
     ? ((predictionAccuracy.correct * 100) / predictionAccuracy.total).toFixed(1)
     : null;
+  const backtestEntryRulesSummary = backtestRequireRisingAbove70
+    ? 'TickWise > 70 + rising over previous 3 days'
+    : 'TickWise > 70';
+  const backtestExitRules = [];
+  if (backtestUseTechStop) backtestExitRules.push(`Technical < ${backtestTechThreshold}`);
+  if (backtestUseTrailingStop) backtestExitRules.push(`Trailing stop ${backtestTrailingStopPct}%`);
+  if (backtestUseTakeProfit) backtestExitRules.push(`Take profit ${backtestTakeProfitPct}%`);
+  const backtestExitRulesSummary = backtestExitRules.length
+    ? backtestExitRules.join(' | ')
+    : 'Hold to latest close';
+  const sortedBacktestDetailRows = useMemo(() => {
+    const rows = Array.isArray(backtestStats?.detailRows) ? backtestStats.detailRows : [];
+    return [...rows].sort((a, b) => {
+      const chainDiff = (a.chainId ?? 0) - (b.chainId ?? 0);
+      if (chainDiff !== 0) return chainDiff;
+      return (a.leg ?? 0) - (b.leg ?? 0);
+    });
+  }, [backtestStats]);
 
 
   // Search and filter state.
@@ -1428,240 +1447,320 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="mb-6 bg-white/90 border border-slate-200 rounded-2xl p-5 shadow-sm backdrop-blur">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-3">
-          <div>
-            <div className="text-sm text-slate-500">Backtest snapshot</div>
-            <div className="text-lg font-semibold text-slate-900">
-              Top Buys: {backtestLookbackDays}-Day Return to Today
+      <section className="mb-6 grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="xl:col-span-4 bg-white/90 border border-slate-200 rounded-2xl p-5 shadow-sm backdrop-blur">
+          <div className="mb-4">
+            <div className="text-sm text-slate-500">Backtest Setup</div>
+            <div className="text-lg font-semibold text-slate-900">Configure Entry and Exit Rules</div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Lookback</label>
+              <select
+                value={backtestLookbackDays}
+                onChange={(e) => setBacktestLookbackDays(Number(e.target.value))}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-700 bg-white"
+              >
+                {[5, 6, 7, 8, 9, 10, 12, 14, 16, 19, 21, 30, 45, 60, 90, 120].map((d) => (
+                  <option key={d} value={d}>
+                    {d} days
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Top Picks</label>
+              <select
+                value={backtestTopCount}
+                onChange={(e) => setBacktestTopCount(Number(e.target.value))}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-700 bg-white"
+              >
+                {[3, 5, 7, 10, 15].map((n) => (
+                  <option key={n} value={n}>
+                    {n} stocks
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-xs text-slate-500">Lookback</label>
-            <select
-              value={backtestLookbackDays}
-              onChange={(e) => setBacktestLookbackDays(Number(e.target.value))}
-              className="border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
-            >
-              {[5, 6, 7, 8, 9, 10, 12, 14, 16, 19, 21, 30, 45, 60, 90, 120].map((d) => (
-                <option key={d} value={d}>
-                  {d} days
-                </option>
-              ))}
-            </select>
-            <label className="text-xs text-slate-500">Top</label>
-            <select
-              value={backtestTopCount}
-              onChange={(e) => setBacktestTopCount(Number(e.target.value))}
-              className="border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
-            >
-              {[3, 5, 7, 10, 15].map((n) => (
-                <option key={n} value={n}>
-                  {n} stocks
-                </option>
-              ))}
-            </select>
-                        <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={backtestUseTechStop}
-                  onChange={(e) => setBacktestUseTechStop(e.target.checked)}
-                />
-                Sell on Technical threshold
-              </label>
-              {backtestUseTechStop && (
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={backtestTechThreshold}
-                  onChange={(e) => setBacktestTechThreshold(Number(e.target.value))}
-                  className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
-                  aria-label="Technical threshold"
-                />
-              )}
+
+          <div className="rounded-xl border border-slate-200 p-3 mb-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Entry Rules</div>
+            <div className="text-xs text-slate-600 mb-2">Base filter: TickWise score must be above 70.</div>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={backtestRequireRisingAbove70}
+                onChange={(e) => setBacktestRequireRisingAbove70(e.target.checked)}
+              />
+              Require score to rise over previous 3 days
+            </label>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-3 mb-3">
+            <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Exit Rules</div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={backtestUseTechStop}
+                    onChange={(e) => setBacktestUseTechStop(e.target.checked)}
+                  />
+                  Sell on technical threshold
+                </label>
+                {backtestUseTechStop && (
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={backtestTechThreshold}
+                    onChange={(e) => setBacktestTechThreshold(Number(e.target.value))}
+                    className="w-20 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                    aria-label="Technical threshold"
+                  />
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={backtestUseTrailingStop}
+                    onChange={(e) => setBacktestUseTrailingStop(e.target.checked)}
+                  />
+                  Trailing stop
+                </label>
+                {backtestUseTrailingStop && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    value={backtestTrailingStopPct}
+                    onChange={(e) => setBacktestTrailingStopPct(Number(e.target.value))}
+                    className="w-20 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                    aria-label="Trailing stop percent"
+                  />
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={backtestUseTakeProfit}
+                    onChange={(e) => setBacktestUseTakeProfit(e.target.checked)}
+                  />
+                  Take profit
+                </label>
+                {backtestUseTakeProfit && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={backtestTakeProfitPct}
+                    onChange={(e) => setBacktestTakeProfitPct(Number(e.target.value))}
+                    className="w-20 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                    aria-label="Take profit percent"
+                  />
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={backtestUseTrailingStop}
-                  onChange={(e) => setBacktestUseTrailingStop(e.target.checked)}
-                />
-                Trailing stop (%)
-              </label>
-              {backtestUseTrailingStop && (
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  value={backtestTrailingStopPct}
-                  onChange={(e) => setBacktestTrailingStopPct(Number(e.target.value))}
-                  className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
-                  aria-label="Trailing stop percent"
-                />
-              )}
+          </div>
+
+          <details className="rounded-xl border border-slate-200 p-3">
+            <summary className="cursor-pointer text-xs uppercase tracking-wide text-slate-500">Advanced</summary>
+            <div className="mt-2 text-xs text-slate-600">
+              Orders execute at the next trading day open after buy/sell signals.
             </div>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={backtestUseTakeProfit}
-                  onChange={(e) => setBacktestUseTakeProfit(e.target.checked)}
-                />
-                Take profit (%)
-              </label>
-              {backtestUseTakeProfit && (
-                <input
-                  type="number"
-                  min="1"
-                  max="500"
-                  value={backtestTakeProfitPct}
-                  onChange={(e) => setBacktestTakeProfitPct(Number(e.target.value))}
-                  className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
-                  aria-label="Take profit percent"
-                />
-              )}
+          </details>
+
+          <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
+            <div className="text-xs uppercase tracking-wide text-cyan-700 mb-1">Active Rules</div>
+            <div className="text-xs text-cyan-900">
+              Entry: {backtestEntryRulesSummary}
             </div>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={backtestRequireRisingAbove70}
-                  onChange={(e) => setBacktestRequireRisingAbove70(e.target.checked)}
-                />
-                Buy only when score > 70 and rising 3 days
-              </label>
+            <div className="text-xs text-cyan-900">
+              Exit: {backtestExitRulesSummary}
+            </div>
+          </div>
+        </div>
+
+        <div className="xl:col-span-8 bg-white/90 border border-slate-200 rounded-2xl p-5 shadow-sm backdrop-blur">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <div>
+              <div className="text-sm text-slate-500">Backtest Results</div>
+              <div className="text-lg font-semibold text-slate-900">
+                Top Buys: {backtestLookbackDays}-Day Return to Today
+              </div>
             </div>
             <div className="text-xs text-slate-500">
               Picks from {backtestStats?.targetDate || `${backtestLookbackDays} days ago`} - Top {backtestTopCount} picks
             </div>
           </div>
+
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBacktestResultTab('summary')}
+              className={`px-3 py-1.5 text-xs rounded-md border ${backtestResultTab === 'summary' ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-slate-700 border-slate-300'}`}
+            >
+              Summary
+            </button>
+            <button
+              type="button"
+              onClick={() => setBacktestResultTab('equity')}
+              className={`px-3 py-1.5 text-xs rounded-md border ${backtestResultTab === 'equity' ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-slate-700 border-slate-300'}`}
+            >
+              Equity Curve
+            </button>
+            <button
+              type="button"
+              onClick={() => setBacktestResultTab('trades')}
+              className={`px-3 py-1.5 text-xs rounded-md border ${backtestResultTab === 'trades' ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-slate-700 border-slate-300'}`}
+            >
+              Trades
+            </button>
+          </div>
+
+          {backtestLoading && (
+            <div className="text-sm text-slate-600">Calculating recent performance...</div>
+          )}
+          {!backtestLoading && backtestStats?.sample === 0 && (
+            <div className="text-sm text-slate-600">Not enough data to compute recent performance.</div>
+          )}
+
+          {!backtestLoading && backtestStats?.sample > 0 && backtestResultTab === 'summary' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                  <div className="text-xs text-emerald-700">Avg Return</div>
+                  <div className="mt-1 text-2xl font-semibold text-emerald-900">{formatPct(backtestStats.avg)}</div>
+                </div>
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-4">
+                  <div className="text-xs text-cyan-700">Median Return</div>
+                  <div className="mt-1 text-2xl font-semibold text-cyan-900">{formatPct(backtestStats.median)}</div>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                  <div className="text-xs text-amber-700">Win Rate</div>
+                  <div className="mt-1 text-2xl font-semibold text-amber-900">{formatPct(backtestStats.winRate)}</div>
+                  <div className="text-xs text-amber-700 mt-1">Sample size: {backtestStats.sample}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="text-xs text-slate-600">Number of Trades</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-900">{backtestStats.tradesCount ?? 0}</div>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                  <div className="text-xs text-emerald-700">Wins</div>
+                  <div className="mt-1 text-lg font-semibold text-emerald-900">{backtestStats.winsCount ?? 0}</div>
+                </div>
+                <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+                  <div className="text-xs text-rose-700">Losses</div>
+                  <div className="mt-1 text-lg font-semibold text-rose-900">{backtestStats.lossesCount ?? 0}</div>
+                </div>
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
+                  <div className="text-xs text-cyan-700">Mean Win Return</div>
+                  <div className="mt-1 text-lg font-semibold text-cyan-900">{formatPct(backtestStats.meanWinReturn)}</div>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                  <div className="text-xs text-amber-700">Mean Loss Return</div>
+                  <div className="mt-1 text-lg font-semibold text-amber-900">{formatPct(backtestStats.meanLossReturn)}</div>
+                </div>
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
+                  <div className="text-xs text-indigo-700">Max Win Return</div>
+                  <div className="mt-1 text-lg font-semibold text-indigo-900">{formatPct(backtestStats.maxWinReturn)}</div>
+                </div>
+                <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3">
+                  <div className="text-xs text-fuchsia-700">Max Loss Rate</div>
+                  <div className="mt-1 text-lg font-semibold text-fuchsia-900">{formatPct(backtestStats.maxLossRate)}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!backtestLoading && backtestResultTab === 'equity' && (
+            backtestSeries?.length > 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="px-4 pt-4">
+                  <PortfolioReturnChart data={backtestSeries} height={260} />
+                </div>
+                <div className="px-4 pb-4 text-xs text-slate-500">
+                  Hover a date to see portfolio holdings and returns for that day.
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-slate-600">Equity curve unavailable for current settings.</div>
+            )
+          )}
+
+          {!backtestLoading && backtestResultTab === 'trades' && (
+            sortedBacktestDetailRows.length > 0 ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                    <div className="text-xs text-slate-600">Number of Trades</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{backtestStats?.tradesCount ?? 0}</div>
+                  </div>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <div className="text-xs text-emerald-700">Wins</div>
+                    <div className="mt-1 text-lg font-semibold text-emerald-900">{backtestStats?.winsCount ?? 0}</div>
+                  </div>
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+                    <div className="text-xs text-rose-700">Losses</div>
+                    <div className="mt-1 text-lg font-semibold text-rose-900">{backtestStats?.lossesCount ?? 0}</div>
+                  </div>
+                  <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3">
+                    <div className="text-xs text-fuchsia-700">Max Loss Rate</div>
+                    <div className="mt-1 text-lg font-semibold text-fuchsia-900">{formatPct(backtestStats?.maxLossRate)}</div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                  <table className="min-w-full text-sm text-left">
+                    <thead className="bg-slate-100 text-slate-700">
+                      <tr>
+                        <th className="px-3 py-2">Seq</th>
+                        <th className="px-3 py-2">Date</th>
+                        <th className="px-3 py-2">Ticker</th>
+                        <th className="px-3 py-2">Entry</th>
+                        <th className="px-3 py-2">Exit Date</th>
+                        <th className="px-3 py-2">Exit Price</th>
+                        <th className="px-3 py-2">Leg Return %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedBacktestDetailRows.map((row, idx) => {
+                        const isPos = row.currentReturn != null && row.currentReturn >= 0;
+                        return (
+                          <tr key={`${row.date}-${row.ticker}-${idx}`} className="border-t border-slate-100">
+                            <td className="px-3 py-2 text-slate-500">
+                              {row.chainId != null && row.leg != null ? `${row.chainId}.${row.leg}` : '-'}
+                            </td>
+                            <td className="px-3 py-2">{row.date}</td>
+                            <td className="px-3 py-2 font-medium">{row.ticker}</td>
+                            <td className="px-3 py-2">{formatPrice(row.entryPrice)}</td>
+                            <td className="px-3 py-2">{row.exitDate || '-'}</td>
+                            <td className="px-3 py-2">{formatPrice(row.latestClose)}</td>
+                            <td className={`px-3 py-2 font-semibold ${isPos ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {row.currentReturn == null ? '-' : formatPct(row.currentReturn)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-slate-600">No trade rows available for current settings.</div>
+            )
+          )}
         </div>
-        {backtestLoading && (
-          <div className="text-sm text-slate-600">Calculating recent performance…</div>
-        )}
-        {!backtestLoading && backtestStats?.sample === 0 && (
-          <div className="text-sm text-slate-600">Not enough data to compute recent performance.</div>
-        )}
-        {!backtestLoading && backtestStats?.sample > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-              <div className="text-xs text-emerald-700">Avg Return</div>
-              <div className="mt-1 text-2xl font-semibold text-emerald-900">
-                {formatPct(backtestStats.avg)}
-              </div>
-            </div>
-            <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-4">
-              <div className="text-xs text-cyan-700">Median Return</div>
-              <div className="mt-1 text-2xl font-semibold text-cyan-900">
-                {formatPct(backtestStats.median)}
-              </div>
-            </div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-              <div className="text-xs text-amber-700">Win Rate</div>
-              <div className="mt-1 text-2xl font-semibold text-amber-900">
-                {formatPct(backtestStats.winRate)}
-              </div>
-              <div className="text-xs text-amber-700 mt-1">
-                Sample size: {backtestStats.sample}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!backtestLoading && backtestSeries?.length > 0 && (
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="px-4 pt-4">
-              <PortfolioReturnChart data={backtestSeries} height={260} />
-            </div>
-            <div className="px-4 pb-4 text-xs text-slate-500">
-              Hover a date to see portfolio holdings and returns for that day.
-            </div>
-          </div>
-        )}
-
-        {!backtestLoading && backtestStats?.detailRows?.length > 0 && (
-          <details className="mt-4">
-            <summary className="cursor-pointer text-sm font-semibold text-cyan-700">
-              {`Show tickers from ${backtestStats?.targetDate || `${backtestLookbackDays} days ago`} and rotation legs`}
-            </summary>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-                <div className="text-xs text-slate-600">Number of Trades</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">{backtestStats.tradesCount ?? 0}</div>
-              </div>
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
-                <div className="text-xs text-emerald-700">Wins</div>
-                <div className="mt-1 text-lg font-semibold text-emerald-900">{backtestStats.winsCount ?? 0}</div>
-              </div>
-              <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
-                <div className="text-xs text-rose-700">Losses</div>
-                <div className="mt-1 text-lg font-semibold text-rose-900">{backtestStats.lossesCount ?? 0}</div>
-              </div>
-              <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
-                <div className="text-xs text-cyan-700">Mean Win Return</div>
-                <div className="mt-1 text-lg font-semibold text-cyan-900">{formatPct(backtestStats.meanWinReturn)}</div>
-              </div>
-              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
-                <div className="text-xs text-amber-700">Mean Loss Return</div>
-                <div className="mt-1 text-lg font-semibold text-amber-900">{formatPct(backtestStats.meanLossReturn)}</div>
-              </div>
-              <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
-                <div className="text-xs text-indigo-700">Max Win Return</div>
-                <div className="mt-1 text-lg font-semibold text-indigo-900">{formatPct(backtestStats.maxWinReturn)}</div>
-              </div>
-              <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3">
-                <div className="text-xs text-fuchsia-700">Max Loss Rate</div>
-                <div className="mt-1 text-lg font-semibold text-fuchsia-900">{formatPct(backtestStats.maxLossRate)}</div>
-              </div>
-            </div>
-            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white">
-              <table className="min-w-full text-sm text-left">
-                <thead className="bg-slate-100 text-slate-700">
-                  <tr>
-                    <th className="px-3 py-2">Seq</th>
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Ticker</th>
-                    <th className="px-3 py-2">Entry</th>
-                    <th className="px-3 py-2">Exit Date</th>
-                    <th className="px-3 py-2">Exit Price</th>
-                    <th className="px-3 py-2">Leg Return %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {backtestStats.detailRows
-                    .sort((a, b) => {
-                      const chainDiff = (a.chainId ?? 0) - (b.chainId ?? 0);
-                      if (chainDiff !== 0) return chainDiff;
-                      return (a.leg ?? 0) - (b.leg ?? 0);
-                    })
-                    .map((row, idx) => {
-                      const isPos = row.currentReturn != null && row.currentReturn >= 0;
-                      return (
-                        <tr key={`${row.date}-${row.ticker}-${idx}`} className="border-t border-slate-100">
-                          <td className="px-3 py-2 text-slate-500">
-                            {row.chainId != null && row.leg != null ? `${row.chainId}.${row.leg}` : '-'}
-                          </td>
-                          <td className="px-3 py-2">{row.date}</td>
-                          <td className="px-3 py-2 font-medium">{row.ticker}</td>
-                          <td className="px-3 py-2">{formatPrice(row.entryPrice)}</td>
-                          <td className="px-3 py-2">{row.exitDate || '-'}</td>
-                          <td className="px-3 py-2">{formatPrice(row.latestClose)}</td>
-                          <td className={`px-3 py-2 font-semibold ${isPos ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {row.currentReturn == null ? '-' : formatPct(row.currentReturn)}
-                          </td>
-
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        )}
-      </div>
+      </section>
 
       <div className="flex items-center justify-between mb-3">
         <div className="text-sm text-slate-600">
