@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { List } from 'react-window';
 import StockChart from '../StockChart';
+import PortfolioReturnChart from '../PortfolioReturnChart';
 import '../index.css';
 import { BarChart2, ThumbsUp, Activity } from 'lucide-react';
 
@@ -392,6 +393,15 @@ export default function Dashboard() {
   const [backtestTechThreshold, setBacktestTechThreshold] = useState(70);
   const [backtestUseTrailingStop, setBacktestUseTrailingStop] = useState(false);
   const [backtestTrailingStopPct, setBacktestTrailingStopPct] = useState(8);
+  const [backtestUseTakeProfit, setBacktestUseTakeProfit] = useState(false);
+  const [backtestTakeProfitPct, setBacktestTakeProfitPct] = useState(20);
+  const [backtestRequireRisingAbove70, setBacktestRequireRisingAbove70] = useState(false);
+  const [backtestSeries, setBacktestSeries] = useState([]);
+  const [predictionAccuracy, setPredictionAccuracy] = useState({
+    correct: 0,
+    total: 0,
+    loading: false,
+  });
   // Environment variable for the container SAS URL. Should look like
   // "https://<account>.blob.core.windows.net/<container>?<sas>".
   // const containerSasUrl = import.meta.env.VITE_CONTAINER_SAS_URL;
@@ -459,21 +469,182 @@ export default function Dashboard() {
   }, [histUrl]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      if (!base || !Array.isArray(histData) || histData.length === 0) {
+        setPredictionAccuracy({ correct: 0, total: 0, loading: false });
+        return;
+      }
+
+      const getHistDate = (row) =>
+        normalizeToISODate(row?.Date_y ?? row?.Date_x ?? row?.analysis_date ?? row?.date ?? row?.Date);
+
+      const buildCloseMap = (rows) => {
+        const byDate = new Map();
+        rows.forEach((r) => {
+          const d = normalizeToISODate(r?.date ?? r?.Date ?? r?.time ?? r?.Time);
+          const c = Number(r?.Close ?? r?.close);
+          if (!d || !Number.isFinite(c)) return;
+          byDate.set(d, c);
+        });
+        const dates = Array.from(byDate.keys()).sort();
+        return { dates, byDate };
+      };
+
+      const findCloseAtOrAfter = (dates, byDate, target) => {
+        if (!dates.length) return null;
+        let lo = 0;
+        let hi = dates.length - 1;
+        let idx = dates.length;
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2);
+          if (dates[mid] >= target) {
+            idx = mid;
+            hi = mid - 1;
+          } else {
+            lo = mid + 1;
+          }
+        }
+        for (let i = idx; i < dates.length; i += 1) {
+          const d = dates[i];
+          const close = byDate.get(d);
+          if (Number.isFinite(close)) return close;
+        }
+        return null;
+      };
+
+      setPredictionAccuracy((prev) => ({ ...prev, loading: true }));
+
+      try {
+        const today = normalizeToISODate(new Date());
+        const dedup = new Map();
+        histData.forEach((row) => {
+          const ticker = row?.ticker;
+          const signalDate = getHistDate(row);
+          const prediction = Number(
+            row?.forecast1m ?? row?.forecast_1m ?? row?.ml_forecast_1m ?? row?.prediction_1m
+          );
+          if (!ticker || !signalDate || !Number.isFinite(prediction)) return;
+          const targetDate = addDays(signalDate, 30);
+          if (!targetDate || targetDate > today) return;
+          const key = `${ticker}|${signalDate}`;
+          if (!dedup.has(key)) {
+            dedup.set(key, { ticker, signalDate, targetDate, prediction });
+          }
+        });
+
+        const predictions = Array.from(dedup.values());
+        if (!predictions.length) {
+          if (!cancelled) setPredictionAccuracy({ correct: 0, total: 0, loading: false });
+          return;
+        }
+
+        const historyCache = new Map();
+        const uniqueTickers = Array.from(new Set(predictions.map((p) => p.ticker)));
+
+        await Promise.all(
+          uniqueTickers.map(async (ticker) => {
+            try {
+              const historyUrl = `${base}/data/${ticker}.json`;
+              const res = await fetch(historyUrl);
+              if (!res.ok) throw new Error(`Failed ${historyUrl}`);
+              const json = await res.json();
+              historyCache.set(ticker, buildCloseMap(Array.isArray(json) ? json : []));
+            } catch (e) {
+              console.error('Prediction accuracy history load failed:', ticker, e);
+              historyCache.set(ticker, null);
+            }
+          })
+        );
+
+        let correct = 0;
+        let total = 0;
+        predictions.forEach((p) => {
+          const hist = historyCache.get(p.ticker);
+          if (!hist?.dates?.length) return;
+          const actual = findCloseAtOrAfter(hist.dates, hist.byDate, p.targetDate);
+          if (!Number.isFinite(actual)) return;
+          total += 1;
+          const tolerance = Math.abs(p.prediction) * 0.1;
+          if (Math.abs(actual - p.prediction) <= tolerance) correct += 1;
+        });
+
+        if (!cancelled) setPredictionAccuracy({ correct, total, loading: false });
+      } catch (e) {
+        console.error('Prediction accuracy calculation failed:', e);
+        if (!cancelled) setPredictionAccuracy({ correct: 0, total: 0, loading: false });
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [base, histData]);
+
+  useEffect(() => {
     if (!base || !Array.isArray(histData) || histData.length === 0) return;
+    const BUY_THRESHOLD = 70;
 
     const getHistDate = (row) =>
       normalizeToISODate(row?.Date_y ?? row?.Date_x ?? row?.analysis_date ?? row?.date ?? row?.Date);
+    const buildTickerScoreHistory = (rows) => {
+      const byTicker = new Map();
+      rows.forEach((r) => {
+        const ticker = r?.ticker;
+        const date = getHistDate(r);
+        const score = Number(r?.tickwise_score);
+        if (!ticker || !date || !Number.isFinite(score)) return;
+        if (!byTicker.has(ticker)) byTicker.set(ticker, new Map());
+        byTicker.get(ticker).set(date, score);
+      });
+      const normalized = new Map();
+      byTicker.forEach((scoreByDate, ticker) => {
+        const points = Array.from(scoreByDate.entries())
+          .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([date, score]) => ({ date, score }));
+        normalized.set(ticker, points);
+      });
+      return normalized;
+    };
+    const scoreHistoryByTicker = buildTickerScoreHistory(histData);
+    const isRisingThreeDaysAboveThreshold = (ticker, signalDate) => {
+      if (!ticker || !signalDate) return false;
+      const points = scoreHistoryByTicker.get(ticker);
+      if (!Array.isArray(points) || points.length < 4) return false;
+      const idx = points.findIndex((p) => p.date === signalDate);
+      if (idx < 3) return false;
+      const s0 = points[idx - 3]?.score;
+      const s1 = points[idx - 2]?.score;
+      const s2 = points[idx - 1]?.score;
+      const s3 = points[idx]?.score;
+      if (![s0, s1, s2, s3].every((v) => Number.isFinite(v))) return false;
+      return s3 > BUY_THRESHOLD && s0 < s1 && s1 < s2 && s2 < s3;
+    };
 
     const buildHistoryMap = (rows) => {
       const byDate = new Map();
+      const openByDate = new Map();
+      const closeDateSet = new Set();
+      const openDateSet = new Set();
       rows.forEach((r) => {
         const t = normalizeToISODate(r?.date ?? r?.Date ?? r?.time);
+        if (!t) return;
         const c = Number(r?.Close ?? r?.close);
-        if (!t || !Number.isFinite(c)) return;
-        byDate.set(t, c);
+        const o = Number(r?.Open ?? r?.open);
+        if (Number.isFinite(c)) {
+          byDate.set(t, c);
+          closeDateSet.add(t);
+        }
+        if (Number.isFinite(o)) {
+          openByDate.set(t, o);
+          openDateSet.add(t);
+        }
       });
-      const dates = Array.from(byDate.keys()).sort();
-      return { byDate, dates };
+      const closeDates = Array.from(closeDateSet.keys()).sort();
+      const openDates = Array.from(openDateSet.keys()).sort();
+      return { byDate, openByDate, dates: closeDates, openDates };
     };
         const buildTechnicalMap = (rows, ticker) => {
           const techByDate = new Map();
@@ -514,6 +685,18 @@ export default function Dashboard() {
           }
           return null;
         };
+        const findFirstReturnAbove = (dates, byDate, startDate, entryPrice, thresholdPct) => {
+          if (!dates.length || !Number.isFinite(entryPrice)) return null;
+          for (let i = 0; i < dates.length; i += 1) {
+            const d = dates[i];
+            if (d < startDate) continue;
+            const price = byDate.get(d);
+            if (!Number.isFinite(price)) continue;
+            const retPct = ((price - entryPrice) * 100) / entryPrice;
+            if (retPct > thresholdPct) return d;
+          }
+          return null;
+        };
 
     const findCloseAtOrBefore = (dates, byDate, target) => {
       if (!dates.length) return null;
@@ -532,6 +715,30 @@ export default function Dashboard() {
       }
       return best ? byDate.get(best) : null;
     };
+    const findOpenAfter = (dates, openByDate, target) => {
+      if (!dates.length) return null;
+      let lo = 0;
+      let hi = dates.length - 1;
+      let startIdx = dates.length;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const d = dates[mid];
+        if (d > target) {
+          startIdx = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      for (let i = startIdx; i < dates.length; i += 1) {
+        const d = dates[i];
+        const o = openByDate.get(d);
+        if (Number.isFinite(o)) {
+          return { date: d, price: o };
+        }
+      }
+      return null;
+    };
 
     const run = async () => {
       setBacktestLoading(true);
@@ -541,7 +748,14 @@ export default function Dashboard() {
             row,
             date: getHistDate(row),
           }))
-          .filter((x) => x.date && x.row?.recommendation?.toLowerCase() === 'buy');
+          .filter(
+            (x) =>
+              x.date &&
+              x.row?.recommendation?.toLowerCase() === 'buy' &&
+              Number(x.row?.tickwise_score) > BUY_THRESHOLD &&
+              (!backtestRequireRisingAbove70 ||
+                isRisingThreeDaysAboveThreshold(x.row?.ticker, x.date))
+          );
 
         const byDate = new Map();
         rows.forEach(({ row, date }) => {
@@ -581,110 +795,329 @@ export default function Dashboard() {
         const tickers = Array.from(new Set(picks.map((p) => p.row?.ticker).filter(Boolean)));
         const historyCache = new Map();
         const technicalCache = new Map();
+        const getHistoryForTicker = async (ticker) => {
+          if (!ticker) return null;
+          if (historyCache.has(ticker)) return historyCache.get(ticker);
+          try {
+            const historyUrl = `${base}/data/${ticker}.json`;
+            const res = await fetch(historyUrl);
+            if (!res.ok) throw new Error(`Failed ${historyUrl}`);
+            const json = await res.json();
+            const map = buildHistoryMap(Array.isArray(json) ? json : []);
+            historyCache.set(ticker, map);
+            return map;
+          } catch (e) {
+            console.error('Backtest history load failed:', ticker, e);
+            historyCache.set(ticker, null);
+            return null;
+          }
+        };
+        const getTechnicalForTicker = (ticker) => {
+          if (!ticker) return null;
+          if (technicalCache.has(ticker)) return technicalCache.get(ticker);
+          const techMap = buildTechnicalMap(histData, ticker);
+          technicalCache.set(ticker, techMap);
+          return techMap;
+        };
         await Promise.all(
           tickers.map(async (ticker) => {
-            try {
-              const historyUrl = `${base}/data/${ticker}.json`;
-              const res = await fetch(historyUrl);
-              if (!res.ok) throw new Error(`Failed ${historyUrl}`);
-              const json = await res.json();
-              const map = buildHistoryMap(Array.isArray(json) ? json : []);
-              historyCache.set(ticker, map);
-              const techMap = buildTechnicalMap(histData, ticker);
-              technicalCache.set(ticker, techMap);
-            } catch (e) {
-              console.error('Backtest history load failed:', ticker, e);
-            }
+            await getHistoryForTicker(ticker);
+            getTechnicalForTicker(ticker);
           })
         );
 
+        const getTopPickOnOrAfter = (startDate, excludeTickers = new Set()) => {
+          if (!startDate || !dates.length) return null;
+          let lo = 0;
+          let hi = dates.length - 1;
+          let startIdx = dates.length;
+          while (lo <= hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            const d = dates[mid];
+            if (d >= startDate) {
+              startIdx = mid;
+              hi = mid - 1;
+            } else {
+              lo = mid + 1;
+            }
+          }
+          for (let i = startIdx; i < dates.length; i += 1) {
+            const d = dates[i];
+            const rowsForDate = byDate.get(d) || [];
+            const sorted = rowsForDate
+              .slice()
+              .sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0));
+            for (let j = 0; j < sorted.length; j += 1) {
+              const row = sorted[j];
+              const ticker = row?.ticker;
+              if (!ticker || excludeTickers.has(ticker)) continue;
+              return { date: d, row };
+            }
+          }
+          return null;
+        };
+
         const returns = [];
         const detailRows = [];
-        picks.forEach(({ date, row }) => {
+        const chains = [];
+        let pickIndex = 0;
+        const initialPortfolio = new Set(picks.map((p) => p.row?.ticker).filter(Boolean));
+        const globalUsed = new Set(initialPortfolio);
+        for (const pick of picks) {
+          const { date, row } = pick;
           const ticker = row?.ticker;
-          if (!ticker) return;
-          const hist = historyCache.get(ticker);
-          if (!hist) return;
-          const entryClose = Number(row?.Close);
-          const entryPrice =
-            Number.isFinite(entryClose) ? entryClose : findCloseAtOrBefore(hist.dates, hist.byDate, date);
-          if (!Number.isFinite(entryPrice)) return;
-                    const latestDate = hist.dates[hist.dates.length - 1];
-          const latestClose = latestDate ? hist.byDate.get(latestDate) : null;
-          if (!Number.isFinite(latestClose)) return;
-                    let exitPrice = latestClose;
-          let exitDate = latestDate;
-          const exits = [];
+          if (!ticker) continue;
+          const maxTrades = 20;
+          let tradeCount = 0;
+          const chainId = pickIndex + 1;
+          const chainUsed = new Set([ticker]);
+          const legs = [];
 
-          if (backtestUseTechStop) {
-            const tech = technicalCache.get(ticker);
-            if (tech?.dates?.length) {
-              const sellDate = findFirstTechDrop(tech.dates, tech.techByDate, date, backtestTechThreshold);
-              if (sellDate) {
-                const sellPrice = findCloseAtOrBefore(hist.dates, hist.byDate, sellDate);
-                if (Number.isFinite(sellPrice)) {
-                  exits.push({ date: sellDate, price: sellPrice });
+          let currentDate = date;
+          let currentRow = row;
+          let entryPrice = null;
+          let cumulative = 1;
+          let lastExitDate = null;
+          let lastExitPrice = null;
+          let leg = 1;
+
+          while (currentRow && tradeCount < maxTrades) {
+            const currentTicker = currentRow?.ticker;
+            if (!currentTicker) break;
+            let hist = historyCache.get(currentTicker);
+            if (hist === undefined) {
+              hist = await getHistoryForTicker(currentTicker);
+            }
+            if (!hist) break;
+
+            const buyOpen = findOpenAfter(hist.openDates || [], hist.openByDate, currentDate);
+            if (!buyOpen) break;
+            const buyDate = buyOpen.date;
+            const resolvedEntryPrice = buyOpen.price;
+            if (!Number.isFinite(resolvedEntryPrice)) break;
+            if (entryPrice == null) entryPrice = resolvedEntryPrice;
+
+            const latestDate = hist.dates[hist.dates.length - 1];
+            const latestClose = latestDate ? hist.byDate.get(latestDate) : null;
+            if (!Number.isFinite(latestClose)) break;
+
+            let exitPrice = latestClose;
+            let exitDate = latestDate;
+            const exits = [];
+
+            if (backtestUseTechStop) {
+              const tech = getTechnicalForTicker(currentTicker);
+              if (tech?.dates?.length) {
+                const sellSignalDate = findFirstTechDrop(tech.dates, tech.techByDate, buyDate, backtestTechThreshold);
+                if (sellSignalDate) {
+                  const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, sellSignalDate);
+                  if (sellOpen && Number.isFinite(sellOpen.price)) {
+                    exits.push({ triggerDate: sellSignalDate, date: sellOpen.date, price: sellOpen.price });
+                  }
                 }
               }
             }
-          }
 
-          if (backtestUseTrailingStop) {
-            const sellDate = findTrailingStopExit(hist.dates, hist.byDate, date, backtestTrailingStopPct);
-            if (sellDate) {
-              const sellPrice = findCloseAtOrBefore(hist.dates, hist.byDate, sellDate);
-              if (Number.isFinite(sellPrice)) {
-                exits.push({ date: sellDate, price: sellPrice });
+            if (backtestUseTrailingStop) {
+              const sellSignalDate = findTrailingStopExit(hist.dates, hist.byDate, buyDate, backtestTrailingStopPct);
+              if (sellSignalDate) {
+                const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, sellSignalDate);
+                if (sellOpen && Number.isFinite(sellOpen.price)) {
+                  exits.push({ triggerDate: sellSignalDate, date: sellOpen.date, price: sellOpen.price });
+                }
               }
+            }
+            if (backtestUseTakeProfit) {
+              const sellSignalDate = findFirstReturnAbove(
+                hist.dates,
+                hist.byDate,
+                buyDate,
+                resolvedEntryPrice,
+                backtestTakeProfitPct
+              );
+              if (sellSignalDate) {
+                const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, sellSignalDate);
+                if (sellOpen && Number.isFinite(sellOpen.price)) {
+                  exits.push({ triggerDate: sellSignalDate, date: sellOpen.date, price: sellOpen.price });
+                }
+              }
+            }
+
+            if (exits.length) {
+              exits.sort((a, b) => {
+                if (a.triggerDate < b.triggerDate) return -1;
+                if (a.triggerDate > b.triggerDate) return 1;
+                if (a.date < b.date) return -1;
+                if (a.date > b.date) return 1;
+                return 0;
+              });
+              exitDate = exits[0].date;
+              exitPrice = exits[0].price;
+            }
+
+            const entryValue = cumulative;
+            const exitValue = entryValue * (exitPrice / resolvedEntryPrice);
+            cumulative = exitValue;
+            lastExitDate = exitDate;
+            lastExitPrice = exitPrice;
+
+            const legReturn = ((exitPrice - resolvedEntryPrice) * 100) / resolvedEntryPrice;
+            detailRows.push({
+              chainId,
+              leg,
+              date: buyDate,
+              ticker: currentTicker,
+              entryPrice: resolvedEntryPrice,
+              latestClose: exitPrice,
+              currentReturn: legReturn,
+              exitDate,
+            });
+            legs.push({
+              ticker: currentTicker,
+              buyDate,
+              buyPrice: resolvedEntryPrice,
+              sellDate: exitDate,
+              sellPrice: exitPrice,
+              entryValue,
+              exitValue,
+            });
+
+            if (!exits.length) break;
+            if (!exitDate || exitDate >= latestDate) break;
+
+            const nextSeed = exitDate;
+            const exclude = new Set(globalUsed);
+            const nextPick = getTopPickOnOrAfter(nextSeed, exclude);
+            if (!nextPick) break;
+
+            currentDate = nextPick.date;
+            currentRow = nextPick.row;
+            tradeCount += 1;
+            leg += 1;
+            if (currentRow?.ticker) {
+              chainUsed.add(currentRow.ticker);
+              globalUsed.add(currentRow.ticker);
+            }
+
+            if (!historyCache.has(currentRow?.ticker)) {
+              // Lazy-load history for re-entry tickers.
+              const loaded = await getHistoryForTicker(currentRow?.ticker);
+              if (!loaded) break;
             }
           }
 
-          if (exits.length) {
-            exits.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-            exitDate = exits[0].date;
-            exitPrice = exits[0].price;
+          if (entryPrice == null || lastExitPrice == null) {
+            pickIndex += 1;
+            continue;
           }
 
-          const r = ((exitPrice - entryPrice) * 100) / entryPrice;
+          const r = (cumulative - 1) * 100;
           returns.push(r);
+          if (legs.length) chains.push({ chainId, legs });
+          pickIndex += 1;
+        }
 
-          const currentReturn = r;
-          detailRows.push({
-            date,
-            ticker,
-            entryPrice,
-            latestClose: exitPrice,
-            currentReturn,
-            exitDate,
+        const getChainSnapshot = (chain, date) => {
+          let currentValue = 1;
+          for (let i = 0; i < chain.legs.length; i += 1) {
+            const leg = chain.legs[i];
+            if (date < leg.buyDate) {
+              return { value: currentValue, holding: null };
+            }
+            if (date <= leg.sellDate) {
+              const hist = historyCache.get(leg.ticker);
+              const close =
+                hist && hist.dates?.length
+                  ? findCloseAtOrBefore(hist.dates, hist.byDate, date)
+                  : null;
+              const resolvedClose = Number.isFinite(close) ? close : leg.buyPrice;
+              const value = leg.entryValue * (resolvedClose / leg.buyPrice);
+              const returnPct = ((resolvedClose - leg.buyPrice) * 100) / leg.buyPrice;
+              return { value, holding: { ticker: leg.ticker, returnPct } };
+            }
+            currentValue = leg.exitValue;
+          }
+          return { value: currentValue, holding: null };
+        };
+
+        const buildPortfolioSeries = () => {
+          if (!chains.length) return [];
+          const dateSet = new Set();
+          chains.forEach((chain) => {
+            chain.legs.forEach((leg) => {
+              const hist = historyCache.get(leg.ticker);
+              if (!hist?.dates?.length) return;
+              hist.dates.forEach((d) => {
+                if (!targetDate || d >= targetDate) dateSet.add(d);
+              });
+            });
           });
-        });
+          const timeline = Array.from(dateSet.keys()).sort();
+          return timeline.map((d) => {
+            let totalValue = 0;
+            const holdings = [];
+            chains.forEach((chain) => {
+              const snap = getChainSnapshot(chain, d);
+              totalValue += snap.value;
+              if (snap.holding) holdings.push(snap.holding);
+            });
+            const avgValue = totalValue / chains.length;
+            holdings.sort((a, b) => (b.returnPct ?? 0) - (a.returnPct ?? 0));
+            return { time: d, value: (avgValue - 1) * 100, holdings };
+          });
+        };
+
+        const portfolioSeries = buildPortfolioSeries();
 
         if (returns.length === 0) {
           setBacktestStats({ sample: 0 });
+          setBacktestSeries([]);
           return;
         }
         const avg = returns.reduce((s, v) => s + v, 0) / returns.length;
         const sorted = [...returns].sort((a, b) => a - b);
         const mid = Math.floor(sorted.length / 2);
         const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-        const wins = returns.filter((r) => r > 0).length;
+        const tradedReturns = detailRows
+          .map((row) => Number(row?.currentReturn))
+          .filter((r) => Number.isFinite(r));
+        const winRateBase = tradedReturns.length ? tradedReturns : returns;
+        const wins = winRateBase.filter((r) => r > 0).length;
+        const winTrades = tradedReturns.filter((r) => r > 0);
+        const lossTrades = tradedReturns.filter((r) => r < 0);
+        const meanWinReturn = winTrades.length
+          ? winTrades.reduce((sum, r) => sum + r, 0) / winTrades.length
+          : null;
+        const meanLossReturn = lossTrades.length
+          ? lossTrades.reduce((sum, r) => sum + r, 0) / lossTrades.length
+          : null;
+        const maxWinReturn = winTrades.length ? Math.max(...winTrades) : null;
+        const maxLossRate = lossTrades.length ? Math.min(...lossTrades) : null;
         setBacktestStats({
-          sample: returns.length,
+          sample: winRateBase.length,
           avg,
           median,
-          winRate: (wins / returns.length) * 100,
+          winRate: (wins / winRateBase.length) * 100,
+          tradesCount: tradedReturns.length,
+          winsCount: winTrades.length,
+          lossesCount: lossTrades.length,
+          meanWinReturn,
+          meanLossReturn,
+          maxWinReturn,
+          maxLossRate,
           windowDays: backtestLookbackDays,
           picksPerDay: backtestTopCount,
           targetDate,
           detailRows,
         });
+        setBacktestSeries(portfolioSeries);
       } finally {
         setBacktestLoading(false);
       }
     };
 
     run();
-  }, [histData, base, backtestLookbackDays, backtestTopCount, backtestUseTechStop, backtestTechThreshold, backtestUseTrailingStop, backtestTrailingStopPct]);
+  }, [histData, base, backtestLookbackDays, backtestTopCount, backtestUseTechStop, backtestTechThreshold, backtestUseTrailingStop, backtestTrailingStopPct, backtestUseTakeProfit, backtestTakeProfitPct, backtestRequireRisingAbove70]);
 
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
@@ -753,6 +1186,12 @@ export default function Dashboard() {
           .reduce((sum, s) => sum + (Number(s.tickwise_score) || 0), 0) / buyCount
       ).toFixed(1)
     : '0.0';
+  const predictionAccuracyFraction = predictionAccuracy.loading
+    ? 'Calculating...'
+    : `${predictionAccuracy.correct}/${predictionAccuracy.total}`;
+  const predictionAccuracyPct = predictionAccuracy.total
+    ? ((predictionAccuracy.correct * 100) / predictionAccuracy.total).toFixed(1)
+    : null;
 
 
   // Search and filter state.
@@ -939,7 +1378,7 @@ export default function Dashboard() {
       
 
       {/* Statistic cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white/90 border border-slate-200 border-l-4 border-cyan-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
           <div className="flex items-center gap-4">
             <div className="text-cyan-600">
@@ -970,6 +1409,20 @@ export default function Dashboard() {
             <div>
               <div className="text-sm text-slate-600">Buy / Hold / Sell</div>
               <div className="text-2xl font-semibold text-slate-900">{buyCount} / {holdCount} / {sellCount}</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white/90 border border-slate-200 border-l-4 border-indigo-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition duration-300 backdrop-blur">
+          <div className="flex items-center gap-4">
+            <div className="text-indigo-600">
+              <Activity size={28} />
+            </div>
+            <div>
+              <div className="text-sm text-slate-600">30D Prediction Accuracy</div>
+              <div className="text-2xl font-semibold text-slate-900">{predictionAccuracyFraction}</div>
+              <div className="text-xs text-slate-500">
+                {predictionAccuracyPct == null ? 'within +/-10% of prediction' : `${predictionAccuracyPct}% within +/-10%`}
+              </div>
             </div>
           </div>
         </div>
@@ -1050,6 +1503,37 @@ export default function Dashboard() {
                 />
               )}
             </div>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={backtestUseTakeProfit}
+                  onChange={(e) => setBacktestUseTakeProfit(e.target.checked)}
+                />
+                Take profit (%)
+              </label>
+              {backtestUseTakeProfit && (
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  value={backtestTakeProfitPct}
+                  onChange={(e) => setBacktestTakeProfitPct(Number(e.target.value))}
+                  className="w-16 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                  aria-label="Take profit percent"
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={backtestRequireRisingAbove70}
+                  onChange={(e) => setBacktestRequireRisingAbove70(e.target.checked)}
+                />
+                Buy only when score > 70 and rising 3 days
+              </label>
+            </div>
             <div className="text-xs text-slate-500">
               Picks from {backtestStats?.targetDate || `${backtestLookbackDays} days ago`} - Top {backtestTopCount} picks
             </div>
@@ -1087,30 +1571,79 @@ export default function Dashboard() {
           </div>
         )}
 
+        {!backtestLoading && backtestSeries?.length > 0 && (
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="px-4 pt-4">
+              <PortfolioReturnChart data={backtestSeries} height={260} />
+            </div>
+            <div className="px-4 pb-4 text-xs text-slate-500">
+              Hover a date to see portfolio holdings and returns for that day.
+            </div>
+          </div>
+        )}
+
         {!backtestLoading && backtestStats?.detailRows?.length > 0 && (
           <details className="mt-4">
             <summary className="cursor-pointer text-sm font-semibold text-cyan-700">
-              {`Show tickers from ${backtestStats?.targetDate || `${backtestLookbackDays} days ago`} and current returns`}
+              {`Show tickers from ${backtestStats?.targetDate || `${backtestLookbackDays} days ago`} and rotation legs`}
             </summary>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                <div className="text-xs text-slate-600">Number of Trades</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{backtestStats.tradesCount ?? 0}</div>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                <div className="text-xs text-emerald-700">Wins</div>
+                <div className="mt-1 text-lg font-semibold text-emerald-900">{backtestStats.winsCount ?? 0}</div>
+              </div>
+              <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+                <div className="text-xs text-rose-700">Losses</div>
+                <div className="mt-1 text-lg font-semibold text-rose-900">{backtestStats.lossesCount ?? 0}</div>
+              </div>
+              <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
+                <div className="text-xs text-cyan-700">Mean Win Return</div>
+                <div className="mt-1 text-lg font-semibold text-cyan-900">{formatPct(backtestStats.meanWinReturn)}</div>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                <div className="text-xs text-amber-700">Mean Loss Return</div>
+                <div className="mt-1 text-lg font-semibold text-amber-900">{formatPct(backtestStats.meanLossReturn)}</div>
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
+                <div className="text-xs text-indigo-700">Max Win Return</div>
+                <div className="mt-1 text-lg font-semibold text-indigo-900">{formatPct(backtestStats.maxWinReturn)}</div>
+              </div>
+              <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3">
+                <div className="text-xs text-fuchsia-700">Max Loss Rate</div>
+                <div className="mt-1 text-lg font-semibold text-fuchsia-900">{formatPct(backtestStats.maxLossRate)}</div>
+              </div>
+            </div>
             <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white">
               <table className="min-w-full text-sm text-left">
-                                <thead className="bg-slate-100 text-slate-700">
+                <thead className="bg-slate-100 text-slate-700">
                   <tr>
+                    <th className="px-3 py-2">Seq</th>
                     <th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2">Ticker</th>
                     <th className="px-3 py-2">Entry</th>
                     <th className="px-3 py-2">Exit Date</th>
                     <th className="px-3 py-2">Exit Price</th>
-                    <th className="px-3 py-2">Return to Today %</th>
+                    <th className="px-3 py-2">Leg Return %</th>
                   </tr>
                 </thead>
                 <tbody>
                   {backtestStats.detailRows
-                    .sort((a, b) => (a.date < b.date ? 1 : -1))
+                    .sort((a, b) => {
+                      const chainDiff = (a.chainId ?? 0) - (b.chainId ?? 0);
+                      if (chainDiff !== 0) return chainDiff;
+                      return (a.leg ?? 0) - (b.leg ?? 0);
+                    })
                     .map((row, idx) => {
                       const isPos = row.currentReturn != null && row.currentReturn >= 0;
                       return (
                         <tr key={`${row.date}-${row.ticker}-${idx}`} className="border-t border-slate-100">
+                          <td className="px-3 py-2 text-slate-500">
+                            {row.chainId != null && row.leg != null ? `${row.chainId}.${row.leg}` : '-'}
+                          </td>
                           <td className="px-3 py-2">{row.date}</td>
                           <td className="px-3 py-2 font-medium">{row.ticker}</td>
                           <td className="px-3 py-2">{formatPrice(row.entryPrice)}</td>

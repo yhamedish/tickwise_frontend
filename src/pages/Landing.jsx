@@ -18,11 +18,12 @@ export default function Landing() {
   const navigate = useNavigate();
 
   const [stocksData, setStocksData] = useState([]);
-    const [loadingStocks, setLoadingStocks] = useState(true);
+  const [loadingStocks, setLoadingStocks] = useState(true);
+  const [heroTicker, setHeroTicker] = useState('');
 
-    const base = import.meta.env.VITE_GCS_PUBLIC_BASE;
-    const scoresUrl = base ? `${base}/today_recommendations.json` : '';
-    const histUrl = base ? `${base}/hist_recommendations.json` : '';
+  const base = import.meta.env.VITE_GCS_PUBLIC_BASE;
+  const scoresUrl = base ? `${base}/today_recommendations.json` : '';
+  const histUrl = base ? `${base}/hist_recommendations.json` : '';
 
 
   useEffect(() => {
@@ -101,17 +102,45 @@ export default function Landing() {
     normalizeToISODate(
       row?.Date_y ?? row?.Date_x ?? row?.analysis_date ?? row?.date ?? row?.Date ?? row?.time
     );
+  const buyCount = useMemo(
+    () => stocksData.filter((s) => s.recommendation?.toLowerCase() === 'buy').length,
+    [stocksData]
+  );
+  const holdCount = useMemo(
+    () => stocksData.filter((s) => s.recommendation?.toLowerCase() === 'hold').length,
+    [stocksData]
+  );
+  const sellCount = useMemo(
+    () => stocksData.filter((s) => s.recommendation?.toLowerCase() === 'sell').length,
+    [stocksData]
+  );
+  const previewAsOf = useMemo(() => {
+    const dates = stocksData
+      .map((row) => getHistDate(row))
+      .filter(Boolean)
+      .sort();
+    return dates.length ? dates[dates.length - 1] : '';
+  }, [stocksData]);
   const stats = useMemo(
     () => [
-      { label: 'Signals combined', value: 'Fundamental + Technical + Sentiment + AI' },
-      { label: 'Refresh', value: 'Daily after market close' },
-      { label: 'Output', value: 'Buy / Hold / Sell clarity' },
+      {
+        label: 'Coverage',
+        value: stocksData.length ? `${stocksData.length} tickers` : 'Loading',
+      },
+      {
+        label: 'Signals today',
+        value: `${buyCount} Buy / ${holdCount} Hold / ${sellCount} Sell`,
+      },
+      {
+        label: 'Data updated',
+        value: previewAsOf || 'After market close',
+      },
     ],
-    []
+    [stocksData.length, buyCount, holdCount, sellCount, previewAsOf]
   );
   const fmtPct = (x) => {
     const n = Number(x);
-    if (!Number.isFinite(n)) return '�';
+    if (!Number.isFinite(n)) return '-';
     const sign = n > 0 ? '+' : '';
     return `${sign}${n.toFixed(1)}%`;
   };
@@ -128,6 +157,15 @@ export default function Landing() {
   }, [topBuys, topSells]);
 
   const previewTicker = previewStock?.ticker || null;
+  const handleHeroSearch = (event) => {
+    event.preventDefault();
+    const trimmed = heroTicker.trim().toUpperCase();
+    if (trimmed) {
+      navigate(`/picks/?q=${encodeURIComponent(trimmed)}`);
+    } else {
+      navigate('/picks/');
+    }
+  };
 
   const [histData, setHistData] = useState([]);
   const [backtestPick, setBacktestPick] = useState(null);
@@ -417,7 +455,7 @@ export default function Landing() {
               onClick={() => navigate('/picks/')}
               className="bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
             >
-              View Today’s Picks
+              View Today's Picks
             </button>
           </div>
 
@@ -435,7 +473,7 @@ export default function Landing() {
       <section className="max-w-6xl mx-auto px-6 pt-16 pb-10 text-center">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white/70 text-sm text-slate-600 shadow-sm backdrop-blur">
           <span className="h-2 w-2 rounded-full bg-green-500" />
-          Daily AI signals • Updated after market close
+          Daily AI signals - Updated after market close
           <span className="inline-flex items-center gap-1 text-slate-500">
             <Sparkles size={14} />
           </span>
@@ -447,15 +485,36 @@ export default function Landing() {
 
         <p className="mt-4 text-lg md:text-xl text-slate-600 max-w-3xl mx-auto">
           TickWise analyzes fundamental data, technical signals, and AI forecasts
-          to deliver clear Buy / Hold / Sell insights — daily.
+          to deliver clear Buy / Hold / Sell insights - daily.
         </p>
 
-        <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+        <form
+          onSubmit={handleHeroSearch}
+          className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3"
+        >
+          <div className="w-full sm:w-[360px]">
+            <input
+              value={heroTicker}
+              onChange={(e) => setHeroTicker(e.target.value)}
+              placeholder="Search ticker (e.g., AAPL)"
+              className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              aria-label="Search ticker"
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full sm:w-auto bg-slate-900 text-white px-5 py-3 rounded-xl text-sm font-semibold hover:bg-slate-800 transition shadow-lg shadow-slate-900/20"
+          >
+            Search ticker
+          </button>
+        </form>
+
+        <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4">
           <button
             onClick={() => navigate('/picks/')}
             className="w-full sm:w-auto bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 inline-flex items-center justify-center gap-2"
           >
-            View Today’s Picks <ArrowRight size={18} />
+            Open Dashboard <ArrowRight size={18} />
           </button>
 
           <a
@@ -493,7 +552,7 @@ export default function Landing() {
             </div>
           </div>
           {backtestLoading && (
-            <div className="text-sm text-slate-600">Calculating recent performance…</div>
+            <div className="text-sm text-slate-600">Calculating recent performance...</div>
           )}
           {!backtestLoading && backtestSummary && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -532,12 +591,12 @@ export default function Landing() {
           <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <LineChart className="text-blue-600" size={20} />
-              <div className="font-semibold">Today’s Signal Snapshot</div>
+              <div className="font-semibold">Today's Signal Snapshot</div>
               <span className="text-xs text-slate-500 hidden sm:inline">
-                (preview)
+                {previewAsOf ? `As of ${previewAsOf}` : 'Preview'}
               </span>
             </div>
-            <div className="text-xs text-slate-500">Click “View Today’s Picks” for live data</div>
+            <div className="text-xs text-slate-500">Click "View Today's Picks" for live data</div>
           </div>
 
           <div className="grid lg:grid-cols-5 gap-0">
@@ -547,27 +606,27 @@ export default function Landing() {
                 <div className="col-span-2">Ticker</div>
                 <div className="col-span-4">Security</div>
                 <div className="col-span-2">Signal</div>
-                <div className="col-span-2 text-right">Tickwise Score</div>
+                <div className="col-span-2 text-right">TickWise Score</div>
                 <div className="col-span-2 text-right">1M AI</div>
               </div>
 
               {loadingStocks && (
-                <div className="py-6 text-sm text-slate-500">Loading live preview…</div>
+                <div className="py-6 text-sm text-slate-500">Loading live preview...</div>
                 )}
 
                 {!loadingStocks && previewRows.length === 0 && (
                 <div className="py-6 text-sm text-slate-500">
-                    Live preview unavailable. Click “View Today’s Picks” to see the dashboard.
+                    Live preview unavailable. Click "View Today's Picks" to see the dashboard.
                 </div>
                 )}
 
                 {!loadingStocks && previewRows.map((stock) => {
                 const ticker = stock.ticker;
-                const security = stock.Security || stock.company || '—';
-                const sig = stock.recommendation || '—';
+                const security = stock.Security || stock.company || '-';
+                const sig = stock.recommendation || '-';
                 const score = Number(stock.tickwise_score);
                 const aiPct = get1mAiPct(stock);
-                const aiPctText = aiPct == null ? '—' : fmtPct(aiPct);
+                const aiPctText = aiPct == null ? '-' : fmtPct(aiPct);
                 const isPos = aiPct != null && aiPct >= 0;
 
                 return (
@@ -581,7 +640,7 @@ export default function Landing() {
                         <SignalChip value={sig} />
                     </div>
                     <div className="col-span-2 text-right font-semibold">
-                        {Number.isFinite(score) ? score.toFixed(0) : '—'}
+                        {Number.isFinite(score) ? score.toFixed(0) : '-'}
                     </div>
                     <div className="col-span-2 text-right">
                         <span className={`font-semibold ${isPos ? 'text-green-600' : 'text-red-600'}`}>
@@ -600,7 +659,7 @@ export default function Landing() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-xs text-slate-500">Backtest top pick</div>
-                  <div className="text-lg font-semibold">{backtestPick?.row?.ticker || "—"}</div>
+                  <div className="text-lg font-semibold">{backtestPick?.row?.ticker || "-"}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-2 text-xs text-slate-600">
@@ -654,7 +713,7 @@ export default function Landing() {
                     value={
                       Number.isFinite(Number(backtestPick?.row?.tickwise_score))
                         ? `${Number(backtestPick.row.tickwise_score).toFixed(0)}`
-                        : '—'
+                        : '-'
                     }
                     tone="good"
                   />
@@ -663,7 +722,7 @@ export default function Landing() {
                     value={
                       Number.isFinite(Number(backtestPick?.row?.technical))
                         ? `${Number(backtestPick.row.technical).toFixed(1)}%`
-                        : '—'
+                        : '-'
                     }
                     tone="good"
                   />
@@ -672,7 +731,7 @@ export default function Landing() {
                     value={
                       Number.isFinite(Number(backtestPick?.row?.fundamental_score))
                         ? `${Number(backtestPick.row.fundamental_score).toFixed(1)}%`
-                        : '—'
+                        : '-'
                     }
                     tone="good"
                   />
@@ -781,16 +840,8 @@ export default function Landing() {
             />
           </div>
 
-          <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-slate-600">
-              The goal is clarity: fewer noisy indicators, more decision-ready signals.
-            </div>
-            <button
-              onClick={() => navigate('/picks/')}
-              className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-800 transition inline-flex items-center gap-2"
-            >
-              Explore the dashboard <ArrowRight size={18} />
-            </button>
+          <div className="mt-8 text-sm text-slate-600">
+            The goal is clarity: fewer noisy indicators, more decision-ready signals.
           </div>
         </div>
       </section>
@@ -805,10 +856,10 @@ export default function Landing() {
             <div>
               <div className="inline-flex items-center gap-2 text-sm text-white/80">
                 <CheckCircle2 size={16} />
-                No setup • Instant insights
+                No setup - Instant insights
               </div>
               <h3 className="mt-3 text-2xl md:text-3xl font-bold tracking-tight">
-                Ready to see today’s signals?
+                Ready to see today's signals?
               </h3>
               <p className="mt-2 text-white/80 max-w-xl">
                 Open the dashboard to view top Buy and Sell picks and inspect charts with forecast overlays.
@@ -819,7 +870,7 @@ export default function Landing() {
               onClick={() => navigate('/picks/')}
               className="bg-white text-slate-900 px-6 py-3 rounded-xl font-semibold hover:bg-slate-100 transition inline-flex items-center gap-2"
             >
-              View Today’s Picks <ArrowRight size={18} />
+              View Today's Picks <ArrowRight size={18} />
             </button>
           </div>
         </div>
@@ -844,7 +895,7 @@ export default function Landing() {
             a="Typically once per day after market close (depending on your data pipeline schedule)."
           />
           <FaqItem
-            q="What’s inside the TickWise score?"
+            q="What's inside the TickWise score?"
             a="A weighted blend of sentiment, fundamental score, technical indicators, and AI forecasts designed for interpretability."
           />
           <FaqItem
@@ -863,7 +914,7 @@ export default function Landing() {
           >
             AI Stock Analysis
           </button>
-          <span className="hidden sm:inline">�</span>
+          <span className="hidden sm:inline">|</span>
           <button
             onClick={() => navigate('/stock-analysis-tools/')}
             className="hover:text-slate-700"
@@ -871,7 +922,7 @@ export default function Landing() {
             Stock Analysis Tools
           </button>
         </div>
-        <div className="mt-2">Copyright {new Date().getFullYear()} TickWise � AI-Powered Market Intelligence</div>
+        <div className="mt-2">Copyright {new Date().getFullYear()} TickWise - AI-Powered Market Intelligence</div>
       </footer>
     </div>
   );
