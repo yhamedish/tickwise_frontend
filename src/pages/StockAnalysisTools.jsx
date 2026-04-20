@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, Wrench } from 'lucide-react';
+import {
+  loadAiStockAnalysisPage,
+  loadDashboardPage,
+} from '../routeLoaders';
 
 function usePageMeta({ title, description, canonical }) {
   useEffect(() => {
@@ -27,7 +31,17 @@ function usePageMeta({ title, description, canonical }) {
 }
 
 export default function StockAnalysisTools() {
-  const navigate = useNavigate();
+  const preloadDashboard = () => {
+    loadDashboardPage();
+  };
+
+  const preloadAiStockAnalysis = () => {
+    loadAiStockAnalysisPage();
+  };
+
+  useEffect(() => {
+    preloadDashboard();
+  }, []);
 
   usePageMeta({
     title: 'Stock Analysis Tools | TickWise',
@@ -52,18 +66,22 @@ export default function StockAnalysisTools() {
         </p>
 
         <div className="mt-8 flex flex-col sm:flex-row gap-3">
-          <button
-            onClick={() => navigate('/picks/')}
+          <Link
+            to="/picks/"
+            onMouseEnter={preloadDashboard}
+            onFocus={preloadDashboard}
             className="bg-cyan-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-cyan-700 transition shadow-lg shadow-cyan-600/20 inline-flex items-center gap-2"
           >
             See the tools in action <ArrowRight size={18} />
-          </button>
-          <button
-            onClick={() => navigate('/ai-stock-analysis/')}
+          </Link>
+          <Link
+            to="/ai-stock-analysis/"
+            onMouseEnter={preloadAiStockAnalysis}
+            onFocus={preloadAiStockAnalysis}
             className="border border-slate-200 bg-white px-6 py-3 rounded-xl font-semibold text-slate-700 hover:bg-slate-50 transition"
           >
             Learn about AI Stock Analysis
-          </button>
+          </Link>
         </div>
       </section>
 
@@ -179,12 +197,14 @@ export default function StockAnalysisTools() {
               </p>
             </div>
 
-            <button
-              onClick={() => navigate('/picks/')}
+            <Link
+              to="/picks/"
+              onMouseEnter={preloadDashboard}
+              onFocus={preloadDashboard}
               className="bg-white text-slate-900 px-6 py-3 rounded-xl font-semibold hover:bg-slate-100 transition inline-flex items-center gap-2"
             >
               View Today&apos;s Picks <ArrowRight size={18} />
-            </button>
+            </Link>
           </div>
         </div>
       </section>

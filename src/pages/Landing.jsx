@@ -1,8 +1,13 @@
 // Landing.jsx
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { PieChart } from 'lucide-react';
 import StockChart from '../StockChart';
+import {
+  loadAiStockAnalysisPage,
+  loadDashboardPage,
+  loadStockAnalysisToolsPage,
+} from '../routeLoaders';
 import {
   BarChart2,
   Brain,
@@ -16,13 +21,25 @@ import {
 
 const LANDING_BACKTEST_LOOKBACK_DAYS = 120;
 const LANDING_BACKTEST_TOP_COUNT = 15;
+const LANDING_BACKTEST_ENTRY_THRESHOLD = 70;
+const LANDING_BACKTEST_TECH_THRESHOLD = 70;
+const LANDING_BACKTEST_TAKE_PROFIT_PCT = 20;
 
 export default function Landing() {
-  const navigate = useNavigate();
+  const preloadDashboard = () => {
+    loadDashboardPage();
+  };
+
+  const preloadAiStockAnalysis = () => {
+    loadAiStockAnalysisPage();
+  };
+
+  const preloadStockAnalysisTools = () => {
+    loadStockAnalysisToolsPage();
+  };
 
   const [stocksData, setStocksData] = useState([]);
   const [loadingStocks, setLoadingStocks] = useState(true);
-  const [heroTicker, setHeroTicker] = useState('');
 
   const base = import.meta.env.VITE_GCS_PUBLIC_BASE;
   const scoresUrl = base ? `${base}/today_recommendations.json` : '';
@@ -51,6 +68,28 @@ export default function Landing() {
     };
     fetchStocks();
   }, [base, scoresUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const preload = () => {
+      if (cancelled) return;
+      preloadDashboard();
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(preload, { timeout: 1500 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback?.(id);
+      };
+    }
+
+    const timeoutId = window.setTimeout(preload, 800);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   const topBuys = useMemo(() => {
     return stocksData
@@ -128,7 +167,7 @@ export default function Landing() {
     () => [
       {
         label: 'Coverage',
-        value: stocksData.length ? `${stocksData.length} tickers` : 'Loading',
+        value: 'S&P 500',
       },
       {
         label: 'Signals today',
@@ -158,17 +197,6 @@ export default function Landing() {
   const previewStock = useMemo(() => {
     return topBuys?.[0] || topSells?.[0] || null;
   }, [topBuys, topSells]);
-
-  const previewTicker = previewStock?.ticker || null;
-  const handleHeroSearch = (event) => {
-    event.preventDefault();
-    const trimmed = heroTicker.trim().toUpperCase();
-    if (trimmed) {
-      navigate(`/picks/?q=${encodeURIComponent(trimmed)}`);
-    } else {
-      navigate('/picks/');
-    }
-  };
 
   const [histData, setHistData] = useState([]);
   const [backtestPick, setBacktestPick] = useState(null);
@@ -202,20 +230,31 @@ export default function Landing() {
     const run = async () => {
       if (!Array.isArray(histData) || histData.length === 0 || !base) {
         setBacktestPick(null);
+        setBacktestPrice([]);
+        setBacktestPriceTicker('');
+        setBacktestSummary(null);
         setBacktestScoreSeries([]);
         return;
       }
 
       const buys = histData
         .map((row) => ({ row, date: getHistDate(row) }))
-        .filter((x) => x.date && x.row?.recommendation?.toLowerCase() === 'buy');
+        .filter(
+          (x) =>
+            x.date &&
+            x.row?.recommendation?.toLowerCase() === 'buy' &&
+            Number(x.row?.tickwise_score) > LANDING_BACKTEST_ENTRY_THRESHOLD
+        );
 
       const dates = Array.from(new Set(buys.map((b) => b.date))).sort();
       if (!dates.length) {
-        setBacktestPick(null);
-        setBacktestScoreSeries([]);
-        return;
-      }
+          setBacktestPick(null);
+          setBacktestPrice([]);
+          setBacktestPriceTicker('');
+          setBacktestSummary(null);
+          setBacktestScoreSeries([]);
+          return;
+        }
 
       const targetAnchor = addDays(new Date(), -LANDING_BACKTEST_LOOKBACK_DAYS);
       let targetDate = dates[0];
@@ -234,20 +273,88 @@ export default function Landing() {
       const candidates = Array.from(unique.values()).slice(0, LANDING_BACKTEST_TOP_COUNT);
       if (!candidates.length) {
         setBacktestPick(null);
+        setBacktestPrice([]);
+        setBacktestPriceTicker('');
+        setBacktestSummary(null);
         setBacktestScoreSeries([]);
         return;
       }
 
       const buildHistoryMap = (rows) => {
         const byDate = new Map();
+        const openByDate = new Map();
         rows.forEach((r) => {
           const t = normalizeToISODate(r?.date ?? r?.Date ?? r?.time ?? r?.Time);
           const c = Number(r?.Close ?? r?.close);
-          if (!t || !Number.isFinite(c)) return;
-          byDate.set(t, c);
+          const o = Number(r?.Open ?? r?.open);
+          if (!t) return;
+          if (Number.isFinite(c)) byDate.set(t, c);
+          if (Number.isFinite(o)) openByDate.set(t, o);
         });
         const datesArr = Array.from(byDate.keys()).sort();
-        return { byDate, dates: datesArr };
+        const openDates = Array.from(openByDate.keys()).sort();
+        return { byDate, dates: datesArr, openByDate, openDates };
+      };
+
+      const buildTechnicalMap = (ticker) => {
+        const techByDate = new Map();
+        histData.forEach((r) => {
+          if (r?.ticker !== ticker) return;
+          const t = getHistDate(r);
+          const v = Number(r?.technical);
+          if (!t || !Number.isFinite(v)) return;
+          techByDate.set(t, v);
+        });
+        const datesArr = Array.from(techByDate.keys()).sort();
+        return { techByDate, dates: datesArr };
+      };
+
+      const findOpenAfter = (datesArr, openByDate, target) => {
+        if (!datesArr.length) return null;
+        let lo = 0;
+        let hi = datesArr.length - 1;
+        let startIdx = datesArr.length;
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2);
+          const d = datesArr[mid];
+          if (d > target) {
+            startIdx = mid;
+            hi = mid - 1;
+          } else {
+            lo = mid + 1;
+          }
+        }
+        for (let i = startIdx; i < datesArr.length; i += 1) {
+          const d = datesArr[i];
+          const o = openByDate.get(d);
+          if (Number.isFinite(o)) {
+            return { date: d, price: o };
+          }
+        }
+        return null;
+      };
+
+      const findFirstTechDrop = (techDates, techByDate, startDate, threshold) => {
+        for (let i = 0; i < techDates.length; i += 1) {
+          const d = techDates[i];
+          if (d < startDate) continue;
+          const v = techByDate.get(d);
+          if (Number.isFinite(v) && v < threshold) return d;
+        }
+        return null;
+      };
+
+      const findFirstReturnAbove = (datesArr, byDate, startDate, entryPrice, thresholdPct) => {
+        if (!datesArr.length || !Number.isFinite(entryPrice)) return null;
+        for (let i = 0; i < datesArr.length; i += 1) {
+          const d = datesArr[i];
+          if (d < startDate) continue;
+          const price = byDate.get(d);
+          if (!Number.isFinite(price)) continue;
+          const retPct = ((price - entryPrice) * 100) / entryPrice;
+          if (retPct > thresholdPct) return d;
+        }
+        return null;
       };
 
       const findCloseAtOrBefore = (datesArr, byDate, target) => {
@@ -270,76 +377,242 @@ export default function Landing() {
 
       setBacktestLoading(true);
       try {
-        const results = await Promise.all(
-          candidates.map(async (row) => {
-            try {
-              const historyUrl = `${base}/data/${row.ticker}.json`;
-              const res = await fetch(historyUrl);
-              if (!res.ok) throw new Error(`Failed to fetch ${historyUrl}`);
-              const json = await res.json();
-              const formatted = Array.isArray(json)
-                ? json
-                    .map((item) => ({
-                      time: normalizeToISODate(item.date ?? item.Date ?? item.time ?? item.Time),
-                      open: Number(item.Open),
-                      high: Number(item.High),
-                      low: Number(item.Low),
-                      close: Number(item.Close),
-                      volume: Number(item.Volume) || 0,
-                    }))
-                    .filter((r) => r.time)
-                : [];
-              const map = buildHistoryMap(formatted);
-              const entryClose = Number(row.Close);
-              const entryPrice =
-                Number.isFinite(entryClose)
-                  ? entryClose
-                  : findCloseAtOrBefore(map.dates, map.byDate, targetDate);
-              if (!Number.isFinite(entryPrice)) return null;
-              const latestDate = map.dates[map.dates.length - 1];
-              const latestClose = latestDate ? map.byDate.get(latestDate) : null;
-              if (!Number.isFinite(latestClose)) return null;
-              const currentReturn = ((latestClose - entryPrice) * 100) / entryPrice;
-              return { row, date: targetDate, currentReturn, formatted };
-            } catch (e) {
-              console.error('Backtest candidate load failed:', row?.ticker, e);
-              return null;
-            }
+        const picks = candidates.map((row) => ({ date: targetDate, row }));
+        const tickers = Array.from(new Set(picks.map((p) => p.row?.ticker).filter(Boolean)));
+        const historyCache = new Map();
+        const technicalCache = new Map();
+
+        const getHistoryForTicker = async (ticker) => {
+          if (!ticker) return null;
+          if (historyCache.has(ticker)) return historyCache.get(ticker);
+          try {
+            const historyUrl = `${base}/data/${ticker}.json`;
+            const res = await fetch(historyUrl);
+            if (!res.ok) throw new Error(`Failed to fetch ${historyUrl}`);
+            const json = await res.json();
+            const formatted = Array.isArray(json)
+              ? json
+                  .map((item) => ({
+                    time: normalizeToISODate(item.date ?? item.Date ?? item.time ?? item.Time),
+                    open: Number(item.Open),
+                    high: Number(item.High),
+                    low: Number(item.Low),
+                    close: Number(item.Close),
+                    volume: Number(item.Volume) || 0,
+                  }))
+                  .filter((r) => r.time)
+              : [];
+            const map = buildHistoryMap(formatted);
+            const payload = { ...map, formatted };
+            historyCache.set(ticker, payload);
+            return payload;
+          } catch (e) {
+            console.error('Backtest candidate load failed:', ticker, e);
+            historyCache.set(ticker, null);
+            return null;
+          }
+        };
+
+        const getTechnicalForTicker = (ticker) => {
+          if (!ticker) return null;
+          if (technicalCache.has(ticker)) return technicalCache.get(ticker);
+          const techMap = buildTechnicalMap(ticker);
+          technicalCache.set(ticker, techMap);
+          return techMap;
+        };
+
+        await Promise.all(
+          tickers.map(async (ticker) => {
+            await getHistoryForTicker(ticker);
+            getTechnicalForTicker(ticker);
           })
         );
 
-        const valid = results.filter((r) => r && Number.isFinite(r.currentReturn));
-        if (!valid.length) {
+        const getTopPickOnOrAfter = (startDate, excludeTickers = new Set()) => {
+          if (!startDate || !dates.length) return null;
+          let lo = 0;
+          let hi = dates.length - 1;
+          let startIdx = dates.length;
+          while (lo <= hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            const d = dates[mid];
+            if (d >= startDate) {
+              startIdx = mid;
+              hi = mid - 1;
+            } else {
+              lo = mid + 1;
+            }
+          }
+          for (let i = startIdx; i < dates.length; i += 1) {
+            const d = dates[i];
+            const rowsForDate = buys
+              .filter((b) => b.date === d)
+              .map((b) => b.row)
+              .sort((a, b) => (Number(b.tickwise_score) || 0) - (Number(a.tickwise_score) || 0));
+            for (let j = 0; j < rowsForDate.length; j += 1) {
+              const row = rowsForDate[j];
+              const ticker = row?.ticker;
+              if (!ticker || excludeTickers.has(ticker)) continue;
+              return { date: d, row };
+            }
+          }
+          return null;
+        };
+
+        const returns = [];
+        const detailRows = [];
+        const chainSummaries = [];
+        const initialPortfolio = new Set(picks.map((p) => p.row?.ticker).filter(Boolean));
+        const globalUsed = new Set(initialPortfolio);
+
+        for (const pick of picks) {
+          const { date, row } = pick;
+          const ticker = row?.ticker;
+          if (!ticker) continue;
+
+          let currentDate = date;
+          let currentRow = row;
+          let cumulative = 1;
+          let lastExitPrice = null;
+          let firstLegBuyDate = null;
+          let tradeCount = 0;
+
+          while (currentRow && tradeCount < 20) {
+            const currentTicker = currentRow?.ticker;
+            if (!currentTicker) break;
+
+            let hist = historyCache.get(currentTicker);
+            if (hist === undefined) {
+              hist = await getHistoryForTicker(currentTicker);
+            }
+            if (!hist) break;
+
+            const buyOpen = findOpenAfter(hist.openDates || [], hist.openByDate, currentDate);
+            if (!buyOpen || !Number.isFinite(buyOpen.price)) break;
+            const buyDate = buyOpen.date;
+            const entryPrice = buyOpen.price;
+            if (firstLegBuyDate == null) firstLegBuyDate = buyDate;
+
+            const latestDate = hist.dates[hist.dates.length - 1];
+            const latestClose = latestDate ? hist.byDate.get(latestDate) : null;
+            if (!Number.isFinite(latestClose)) break;
+
+            let exitDate = latestDate;
+            let exitPrice = latestClose;
+            const exits = [];
+
+            const tech = getTechnicalForTicker(currentTicker);
+            if (tech?.dates?.length) {
+              const sellSignalDate = findFirstTechDrop(
+                tech.dates,
+                tech.techByDate,
+                buyDate,
+                LANDING_BACKTEST_TECH_THRESHOLD
+              );
+              if (sellSignalDate) {
+                const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, sellSignalDate);
+                if (sellOpen && Number.isFinite(sellOpen.price)) {
+                  exits.push({ triggerDate: sellSignalDate, date: sellOpen.date, price: sellOpen.price });
+                }
+              }
+            }
+
+            const takeProfitSignalDate = findFirstReturnAbove(
+              hist.dates,
+              hist.byDate,
+              buyDate,
+              entryPrice,
+              LANDING_BACKTEST_TAKE_PROFIT_PCT
+            );
+            if (takeProfitSignalDate) {
+              const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, takeProfitSignalDate);
+              if (sellOpen && Number.isFinite(sellOpen.price)) {
+                exits.push({ triggerDate: takeProfitSignalDate, date: sellOpen.date, price: sellOpen.price });
+              }
+            }
+
+            if (exits.length) {
+              exits.sort((a, b) => {
+                if (a.triggerDate < b.triggerDate) return -1;
+                if (a.triggerDate > b.triggerDate) return 1;
+                if (a.date < b.date) return -1;
+                if (a.date > b.date) return 1;
+                return 0;
+              });
+              exitDate = exits[0].date;
+              exitPrice = exits[0].price;
+            }
+
+            cumulative *= exitPrice / entryPrice;
+            lastExitPrice = exitPrice;
+            detailRows.push({
+              ticker: currentTicker,
+              currentReturn: ((exitPrice - entryPrice) * 100) / entryPrice,
+              buyDate,
+              exitDate,
+            });
+
+            if (!exits.length || !exitDate || exitDate >= latestDate) break;
+
+            const nextPick = getTopPickOnOrAfter(exitDate, globalUsed);
+            if (!nextPick) break;
+
+            currentDate = nextPick.date;
+            currentRow = nextPick.row;
+            if (currentRow?.ticker) globalUsed.add(currentRow.ticker);
+            tradeCount += 1;
+          }
+
+          if (lastExitPrice == null) {
+            continue;
+          }
+
+          const chainReturn = (cumulative - 1) * 100;
+          returns.push(chainReturn);
+          chainSummaries.push({
+            startRow: row,
+            startDate: date,
+            buyDate: firstLegBuyDate,
+            returnPct: chainReturn,
+          });
+        }
+
+        if (!returns.length) {
           setBacktestPick(null);
+          setBacktestPrice([]);
+          setBacktestPriceTicker('');
           setBacktestScoreSeries([]);
           setBacktestSummary(null);
           return;
         }
 
-        const returns = valid.map((v) => v.currentReturn);
         const avg = returns.reduce((s, v) => s + v, 0) / returns.length;
         const sorted = [...returns].sort((a, b) => a - b);
         const mid = Math.floor(sorted.length / 2);
         const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-        const wins = returns.filter((r) => r > 0).length;
+        const tradedReturns = detailRows
+          .map((row) => Number(row?.currentReturn))
+          .filter((r) => Number.isFinite(r));
+        const winRateBase = tradedReturns.length ? tradedReturns : returns;
+        const wins = winRateBase.filter((r) => r > 0).length;
         setBacktestSummary({
           avg,
           median,
-          winRate: (wins / returns.length) * 100,
-          sample: returns.length,
+          winRate: (wins / winRateBase.length) * 100,
+          sample: winRateBase.length,
           date: targetDate,
         });
 
-        valid.sort((a, b) => b.currentReturn - a.currentReturn);
-        const best = valid[0];
+        chainSummaries.sort((a, b) => b.returnPct - a.returnPct);
+        const best = chainSummaries[0];
         if (cancelled) return;
 
-        setBacktestPick({ date: best.date, row: best.row });
-        setBacktestPrice(best.formatted || []);
-        setBacktestPriceTicker(best.row.ticker);
+        setBacktestPick({ date: best.buyDate || best.startDate, row: best.startRow });
+        setBacktestPrice([]);
+        setBacktestPriceTicker('');
 
         const scoreSeries = histData
-          .filter((r) => r?.ticker === best.row.ticker)
+          .filter((r) => r?.ticker === best.startRow?.ticker)
           .map((r) => ({
             time: getHistDate(r),
             value: Number(r.tickwise_score),
@@ -433,18 +706,22 @@ export default function Landing() {
             <a className="hover:text-slate-900 transition" href="#how">
               How it works
             </a>
-            <button
-              onClick={() => navigate('/ai-stock-analysis/')}
+            <Link
+              to="/ai-stock-analysis/"
+              onMouseEnter={preloadAiStockAnalysis}
+              onFocus={preloadAiStockAnalysis}
               className="hover:text-slate-900 transition"
             >
               AI Stock Analysis
-            </button>
-            <button
-              onClick={() => navigate('/stock-analysis-tools/')}
+            </Link>
+            <Link
+              to="/stock-analysis-tools/"
+              onMouseEnter={preloadStockAnalysisTools}
+              onFocus={preloadStockAnalysisTools}
               className="hover:text-slate-900 transition"
             >
               Stock Analysis Tools
-            </button>
+            </Link>
             <a href="mailto:support@tickwisetech.com?subject=TickWise%20Feedback"
             className="hover:text-slate-900">
             Contact
@@ -454,21 +731,25 @@ export default function Landing() {
               FAQ
             </a>
 
-            <button
-              onClick={() => navigate('/picks/')}
+            <Link
+              to="/picks/"
+              onMouseEnter={preloadDashboard}
+              onFocus={preloadDashboard}
               className="bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
             >
               View Today's Picks
-            </button>
+            </Link>
           </div>
 
           {/* Mobile CTA */}
-          <button
-            onClick={() => navigate('/picks/')}
+          <Link
+            to="/picks/"
+            onMouseEnter={preloadDashboard}
+            onFocus={preloadDashboard}
             className="md:hidden bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
           >
             Picks
-          </button>
+          </Link>
         </div>
       </header>
 
@@ -491,34 +772,15 @@ export default function Landing() {
           to deliver clear Buy / Hold / Sell insights - daily.
         </p>
 
-        <form
-          onSubmit={handleHeroSearch}
-          className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3"
-        >
-          <div className="w-full sm:w-[360px]">
-            <input
-              value={heroTicker}
-              onChange={(e) => setHeroTicker(e.target.value)}
-              placeholder="Search ticker (e.g., AAPL)"
-              className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              aria-label="Search ticker"
-            />
-          </div>
-          <button
-            type="submit"
-            className="w-full sm:w-auto bg-slate-900 text-white px-5 py-3 rounded-xl text-sm font-semibold hover:bg-slate-800 transition shadow-lg shadow-slate-900/20"
-          >
-            Search ticker
-          </button>
-        </form>
-
-        <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4">
-          <button
-            onClick={() => navigate('/picks/')}
+        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <Link
+            to="/picks/"
+            onMouseEnter={preloadDashboard}
+            onFocus={preloadDashboard}
             className="w-full sm:w-auto bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 inline-flex items-center justify-center gap-2"
           >
             Open Dashboard <ArrowRight size={18} />
-          </button>
+          </Link>
 
           <a
             href="#how"
@@ -548,7 +810,7 @@ export default function Landing() {
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
               <div className="text-xs uppercase tracking-wide text-slate-500">Backtest Snapshot</div>
-              <div className="text-lg font-semibold">Top Buys from one month ago</div>
+              <div className="text-lg font-semibold">Top 15 buys from 120 days ago</div>
             </div>
             <div className="text-xs text-slate-500">
               {backtestSummary?.date ? `As of ${backtestSummary.date}` : 'Loading history'}
@@ -759,12 +1021,14 @@ export default function Landing() {
               TickWise is an AI stock analysis platform that blends ML forecasts with technical
               and fundamental signals. See why a ticker is rated Buy, Hold, or Sell.
             </p>
-            <button
-              onClick={() => navigate('/ai-stock-analysis/')}
+            <Link
+              to="/ai-stock-analysis/"
+              onMouseEnter={preloadAiStockAnalysis}
+              onFocus={preloadAiStockAnalysis}
               className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-700 hover:text-cyan-800"
             >
               Learn about AI Stock Analysis <ArrowRight size={16} />
-            </button>
+            </Link>
           </div>
           <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-8 shadow-sm">
             <div className="text-xs uppercase tracking-wide text-slate-500">Stock Analysis Tools</div>
@@ -773,12 +1037,14 @@ export default function Landing() {
               Compare forecast ranges, technical momentum, and fundamental health in one place.
               Filter, sort, and drill into the tools that matter most.
             </p>
-            <button
-              onClick={() => navigate('/stock-analysis-tools/')}
+            <Link
+              to="/stock-analysis-tools/"
+              onMouseEnter={preloadStockAnalysisTools}
+              onFocus={preloadStockAnalysisTools}
               className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-700 hover:text-cyan-800"
             >
               Explore Stock Analysis Tools <ArrowRight size={16} />
-            </button>
+            </Link>
           </div>
         </div>
       </section>
@@ -869,12 +1135,14 @@ export default function Landing() {
               </p>
             </div>
 
-            <button
-              onClick={() => navigate('/picks/')}
+            <Link
+              to="/picks/"
+              onMouseEnter={preloadDashboard}
+              onFocus={preloadDashboard}
               className="bg-white text-slate-900 px-6 py-3 rounded-xl font-semibold hover:bg-slate-100 transition inline-flex items-center gap-2"
             >
               View Today's Picks <ArrowRight size={18} />
-            </button>
+            </Link>
           </div>
         </div>
       </section>
@@ -911,19 +1179,23 @@ export default function Landing() {
       {/* Footer */}
       <footer className="text-center text-sm text-slate-500 py-10">
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-          <button
-            onClick={() => navigate('/ai-stock-analysis/')}
+          <Link
+            to="/ai-stock-analysis/"
+            onMouseEnter={preloadAiStockAnalysis}
+            onFocus={preloadAiStockAnalysis}
             className="hover:text-slate-700"
           >
             AI Stock Analysis
-          </button>
+          </Link>
           <span className="hidden sm:inline">|</span>
-          <button
-            onClick={() => navigate('/stock-analysis-tools/')}
+          <Link
+            to="/stock-analysis-tools/"
+            onMouseEnter={preloadStockAnalysisTools}
+            onFocus={preloadStockAnalysisTools}
             className="hover:text-slate-700"
           >
             Stock Analysis Tools
-          </button>
+          </Link>
         </div>
         <div className="mt-2">Copyright {new Date().getFullYear()} TickWise - AI-Powered Market Intelligence</div>
       </footer>
