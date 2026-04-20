@@ -18,6 +18,12 @@ const dummyData = [
   { ticker: 'NFLX', Security: 'Netflix Inc.', recommendation: 'Sell', Tickwise: 70, sentiment: -0.1, technical: 0.4, forecast1m: -2.5, analysts_forecast: 10 }
 ];
 
+const DEFAULT_BACKTEST_LOOKBACK_DAYS = 120;
+const DEFAULT_BACKTEST_TOP_COUNT = 15;
+const DEFAULT_BACKTEST_ENTRY_THRESHOLD = 70;
+const BACKTEST_MIN_HOLD_DAY_OPTIONS = [0, 3, 5, 7, 10, 15, 30];
+const DEFAULT_BACKTEST_MIN_HOLD_DAYS = 0;
+
 // Helper to generate forecast lines for the chart. Takes the last close price and applies
 // a percentage change.
 function generateForecastLine(priceData, percentChange, days) {
@@ -387,15 +393,16 @@ export default function Dashboard() {
   const [loadingHist, setLoadingHist] = useState(true);
   const [backtestStats, setBacktestStats] = useState(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
-  const [backtestLookbackDays, setBacktestLookbackDays] = useState(30);
-  const [backtestTopCount, setBacktestTopCount] = useState(5);
-  const [backtestUseTechStop, setBacktestUseTechStop] = useState(false);
+  const [backtestLookbackDays, setBacktestLookbackDays] = useState(DEFAULT_BACKTEST_LOOKBACK_DAYS);
+  const [backtestTopCount, setBacktestTopCount] = useState(DEFAULT_BACKTEST_TOP_COUNT);
+  const [backtestEntryThreshold, setBacktestEntryThreshold] = useState(DEFAULT_BACKTEST_ENTRY_THRESHOLD);
+  const [backtestUseTechStop, setBacktestUseTechStop] = useState(true);
   const [backtestTechThreshold, setBacktestTechThreshold] = useState(70);
   const [backtestUseTrailingStop, setBacktestUseTrailingStop] = useState(false);
   const [backtestTrailingStopPct, setBacktestTrailingStopPct] = useState(8);
-  const [backtestUseTakeProfit, setBacktestUseTakeProfit] = useState(false);
+  const [backtestUseTakeProfit, setBacktestUseTakeProfit] = useState(true);
   const [backtestTakeProfitPct, setBacktestTakeProfitPct] = useState(20);
-  const [backtestRequireRisingAbove70, setBacktestRequireRisingAbove70] = useState(false);
+  const [backtestMinHoldDays, setBacktestMinHoldDays] = useState(DEFAULT_BACKTEST_MIN_HOLD_DAYS);
   const [backtestResultTab, setBacktestResultTab] = useState('summary');
   const [backtestSeries, setBacktestSeries] = useState([]);
   const [predictionAccuracy, setPredictionAccuracy] = useState({
@@ -586,44 +593,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!base || !Array.isArray(histData) || histData.length === 0) return;
-    const BUY_THRESHOLD = 70;
-
     const getHistDate = (row) =>
       normalizeToISODate(row?.Date_y ?? row?.Date_x ?? row?.analysis_date ?? row?.date ?? row?.Date);
-    const buildTickerScoreHistory = (rows) => {
-      const byTicker = new Map();
-      rows.forEach((r) => {
-        const ticker = r?.ticker;
-        const date = getHistDate(r);
-        const score = Number(r?.tickwise_score);
-        if (!ticker || !date || !Number.isFinite(score)) return;
-        if (!byTicker.has(ticker)) byTicker.set(ticker, new Map());
-        byTicker.get(ticker).set(date, score);
-      });
-      const normalized = new Map();
-      byTicker.forEach((scoreByDate, ticker) => {
-        const points = Array.from(scoreByDate.entries())
-          .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-          .map(([date, score]) => ({ date, score }));
-        normalized.set(ticker, points);
-      });
-      return normalized;
-    };
-    const scoreHistoryByTicker = buildTickerScoreHistory(histData);
-    const isRisingThreeDaysAboveThreshold = (ticker, signalDate) => {
-      if (!ticker || !signalDate) return false;
-      const points = scoreHistoryByTicker.get(ticker);
-      if (!Array.isArray(points) || points.length < 4) return false;
-      const idx = points.findIndex((p) => p.date === signalDate);
-      if (idx < 3) return false;
-      const s0 = points[idx - 3]?.score;
-      const s1 = points[idx - 2]?.score;
-      const s2 = points[idx - 1]?.score;
-      const s3 = points[idx]?.score;
-      if (![s0, s1, s2, s3].every((v) => Number.isFinite(v))) return false;
-      return s3 > BUY_THRESHOLD && s0 < s1 && s1 < s2 && s2 < s3;
-    };
-
     const buildHistoryMap = (rows) => {
       const byDate = new Map();
       const openByDate = new Map();
@@ -669,7 +640,20 @@ export default function Dashboard() {
           }
           return null;
         };
-        const findTrailingStopExit = (dates, byDate, startDate, pct) => {
+        const getNthMarketDateOnOrAfter = (dates, startDate, marketDays) => {
+          if (!dates.length || !startDate || !Number.isFinite(marketDays) || marketDays < 1) return startDate;
+          let startIdx = -1;
+          for (let i = 0; i < dates.length; i += 1) {
+            if (dates[i] >= startDate) {
+              startIdx = i;
+              break;
+            }
+          }
+          if (startIdx === -1) return null;
+          const targetIdx = startIdx + marketDays - 1;
+          return dates[targetIdx] ?? null;
+        };
+        const findTrailingStopExit = (dates, byDate, startDate, pct, eligibleDate) => {
           if (!dates.length) return null;
           let maxPrice = null;
           for (let i = 0; i < dates.length; i += 1) {
@@ -682,7 +666,7 @@ export default function Dashboard() {
               continue;
             }
             const stopPrice = maxPrice * (1 - pct / 100);
-            if (price <= stopPrice) return d;
+            if (d >= eligibleDate && price <= stopPrice) return d;
           }
           return null;
         };
@@ -753,9 +737,7 @@ export default function Dashboard() {
             (x) =>
               x.date &&
               x.row?.recommendation?.toLowerCase() === 'buy' &&
-              Number(x.row?.tickwise_score) > BUY_THRESHOLD &&
-              (!backtestRequireRisingAbove70 ||
-                isRisingThreeDaysAboveThreshold(x.row?.ticker, x.date))
+              Number(x.row?.tickwise_score) > backtestEntryThreshold
           );
 
         const byDate = new Map();
@@ -901,6 +883,8 @@ export default function Dashboard() {
             const latestDate = hist.dates[hist.dates.length - 1];
             const latestClose = latestDate ? hist.byDate.get(latestDate) : null;
             if (!Number.isFinite(latestClose)) break;
+            const minHoldSignalDate =
+              getNthMarketDateOnOrAfter(hist.dates, buyDate, backtestMinHoldDays) ?? latestDate;
 
             let exitPrice = latestClose;
             let exitDate = latestDate;
@@ -909,7 +893,12 @@ export default function Dashboard() {
             if (backtestUseTechStop) {
               const tech = getTechnicalForTicker(currentTicker);
               if (tech?.dates?.length) {
-                const sellSignalDate = findFirstTechDrop(tech.dates, tech.techByDate, buyDate, backtestTechThreshold);
+                const sellSignalDate = findFirstTechDrop(
+                  tech.dates,
+                  tech.techByDate,
+                  minHoldSignalDate,
+                  backtestTechThreshold
+                );
                 if (sellSignalDate) {
                   const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, sellSignalDate);
                   if (sellOpen && Number.isFinite(sellOpen.price)) {
@@ -920,7 +909,13 @@ export default function Dashboard() {
             }
 
             if (backtestUseTrailingStop) {
-              const sellSignalDate = findTrailingStopExit(hist.dates, hist.byDate, buyDate, backtestTrailingStopPct);
+              const sellSignalDate = findTrailingStopExit(
+                hist.dates,
+                hist.byDate,
+                buyDate,
+                backtestTrailingStopPct,
+                minHoldSignalDate
+              );
               if (sellSignalDate) {
                 const sellOpen = findOpenAfter(hist.openDates || [], hist.openByDate, sellSignalDate);
                 if (sellOpen && Number.isFinite(sellOpen.price)) {
@@ -932,7 +927,7 @@ export default function Dashboard() {
               const sellSignalDate = findFirstReturnAbove(
                 hist.dates,
                 hist.byDate,
-                buyDate,
+                minHoldSignalDate,
                 resolvedEntryPrice,
                 backtestTakeProfitPct
               );
@@ -1118,7 +1113,7 @@ export default function Dashboard() {
     };
 
     run();
-  }, [histData, base, backtestLookbackDays, backtestTopCount, backtestUseTechStop, backtestTechThreshold, backtestUseTrailingStop, backtestTrailingStopPct, backtestUseTakeProfit, backtestTakeProfitPct, backtestRequireRisingAbove70]);
+  }, [histData, base, backtestLookbackDays, backtestTopCount, backtestEntryThreshold, backtestUseTechStop, backtestTechThreshold, backtestUseTrailingStop, backtestTrailingStopPct, backtestUseTakeProfit, backtestTakeProfitPct, backtestMinHoldDays]);
 
   // Fetch price history on demand whenever the expanded ticker changes.
   useEffect(() => {
@@ -1193,10 +1188,9 @@ export default function Dashboard() {
   const predictionAccuracyPct = predictionAccuracy.total
     ? ((predictionAccuracy.correct * 100) / predictionAccuracy.total).toFixed(1)
     : null;
-  const backtestEntryRulesSummary = backtestRequireRisingAbove70
-    ? 'TickWise > 70 + rising over previous 3 days'
-    : 'TickWise > 70';
+  const backtestEntryRulesSummary = `TickWise > ${backtestEntryThreshold}`;
   const backtestExitRules = [];
+  backtestExitRules.push(`Min hold ${backtestMinHoldDays} market days`);
   if (backtestUseTechStop) backtestExitRules.push(`Technical < ${backtestTechThreshold}`);
   if (backtestUseTrailingStop) backtestExitRules.push(`Trailing stop ${backtestTrailingStopPct}%`);
   if (backtestUseTakeProfit) backtestExitRules.push(`Take profit ${backtestTakeProfitPct}%`);
@@ -1487,20 +1481,42 @@ export default function Dashboard() {
 
           <div className="rounded-xl border border-slate-200 p-3 mb-3">
             <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Entry Rules</div>
-            <div className="text-xs text-slate-600 mb-2">Base filter: TickWise score must be above 70.</div>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <label className="text-sm text-slate-700">Minimum score</label>
               <input
-                type="checkbox"
-                checked={backtestRequireRisingAbove70}
-                onChange={(e) => setBacktestRequireRisingAbove70(e.target.checked)}
+                type="number"
+                min="0"
+                max="100"
+                value={backtestEntryThreshold}
+                onChange={(e) => setBacktestEntryThreshold(Number(e.target.value))}
+                className="w-20 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                aria-label="Minimum TickWise score"
               />
-              Require score to rise over previous 3 days
-            </label>
+            </div>
+            <div className="text-xs text-slate-600 mb-2">
+              Base filter: TickWise score must be above {backtestEntryThreshold}.
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 p-3 mb-3">
             <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Exit Rules</div>
             <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-sm text-slate-700">Minimum hold</label>
+                <select
+                  value={backtestMinHoldDays}
+                  onChange={(e) => setBacktestMinHoldDays(Number(e.target.value))}
+                  className="w-28 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700 bg-white"
+                  aria-label="Minimum hold market days"
+                >
+                  {BACKTEST_MIN_HOLD_DAY_OPTIONS.map((days) => (
+                    <option key={days} value={days}>
+                      {days} days
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="flex items-center justify-between gap-2">
                 <label className="flex items-center gap-2 text-sm text-slate-700">
                   <input

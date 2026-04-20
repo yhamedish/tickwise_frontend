@@ -14,6 +14,9 @@ import {
   LineChart,
 } from 'lucide-react';
 
+const LANDING_BACKTEST_LOOKBACK_DAYS = 120;
+const LANDING_BACKTEST_TOP_COUNT = 15;
+
 export default function Landing() {
   const navigate = useNavigate();
 
@@ -214,7 +217,7 @@ export default function Landing() {
         return;
       }
 
-      const targetAnchor = addDays(new Date(), -30);
+      const targetAnchor = addDays(new Date(), -LANDING_BACKTEST_LOOKBACK_DAYS);
       let targetDate = dates[0];
       for (let i = 0; i < dates.length; i += 1) {
         if (dates[i] <= targetAnchor) targetDate = dates[i];
@@ -228,7 +231,7 @@ export default function Landing() {
         if (!t) return;
         if (!unique.has(t)) unique.set(t, r);
       });
-      const candidates = Array.from(unique.values()).slice(0, 5);
+      const candidates = Array.from(unique.values()).slice(0, LANDING_BACKTEST_TOP_COUNT);
       if (!candidates.length) {
         setBacktestPick(null);
         setBacktestScoreSeries([]);
