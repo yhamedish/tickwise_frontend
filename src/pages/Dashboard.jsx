@@ -2269,13 +2269,13 @@ export default function Dashboard() {
               These stock picks are generated using a combination of:
             </p>
             <ul className="list-disc pl-6">
-              <li><strong>News Sentiment Analysis:</strong> We analyze recent financial news using a transformer-based NLP model (FinBERT) to assess the tone around each stock.</li>
               <li><strong>Technical Indicators:</strong> Price patterns and trends are quantified using technical signals like momentum, RSI, and moving averages.</li>
+              <li><strong>Fundamental Analysis:</strong> Company quality is evaluated through factors such as profitability, valuation, stability, and yield.</li>
               <li><strong>Machine Learning Forecasts:</strong> A trained regression model predicts near-term and long-term performance based on historical data.</li>
+              <li><strong>Analyst Ratings and Targets:</strong> Consensus analyst views add an external reference point for expected upside and longer-term conviction.</li>
             </ul>
-            <h2>How These Stock Picks Are Generated</h2>
             <p>
-              Tickwise scores are calculated by weighting the alignment of news sentiment, technical strength, and model forecast.
+              Tickwise scores are calculated by weighting the alignment of technical strength, fundamental quality, model forecasts, and analyst outlook.
             </p>
           </div>
         </details>
