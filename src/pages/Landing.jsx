@@ -24,6 +24,12 @@ const LANDING_BACKTEST_TOP_COUNT = 15;
 const LANDING_BACKTEST_ENTRY_THRESHOLD = 70;
 const LANDING_BACKTEST_TECH_THRESHOLD = 70;
 const LANDING_BACKTEST_TAKE_PROFIT_PCT = 20;
+const EXCLUDED_TICKERS = new Set(['SPY']);
+
+function filterSupportedTickers(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row) => !EXCLUDED_TICKERS.has(String(row?.ticker || '').toUpperCase()));
+}
 
 export default function Landing() {
   const preloadDashboard = () => {
@@ -58,7 +64,7 @@ export default function Landing() {
         const res = await fetch(scoresUrl);
         if (!res.ok) throw new Error(`Failed to fetch ${scoresUrl}: ${res.status} ${res.statusText}`);
         const json = await res.json();
-        setStocksData(Array.isArray(json) ? json : []);
+        setStocksData(filterSupportedTickers(json));
       } catch (e) {
         console.error('Landing preview failed to load recommendations:', e);
         setStocksData([]);
@@ -170,11 +176,11 @@ export default function Landing() {
         value: 'S&P 500',
       },
       {
-        label: 'Signals today',
-        value: `${buyCount} Buy / ${holdCount} Hold / ${sellCount} Sell`,
+        label: 'Workflow',
+        value: 'Scan -> compare -> drill into a ticker',
       },
       {
-        label: 'Data updated',
+        label: 'Updated',
         value: previewAsOf || 'After market close',
       },
     ],
@@ -197,7 +203,6 @@ export default function Landing() {
   const previewStock = useMemo(() => {
     return topBuys?.[0] || topSells?.[0] || null;
   }, [topBuys, topSells]);
-
   const [histData, setHistData] = useState([]);
   const [backtestPick, setBacktestPick] = useState(null);
   const [backtestPrice, setBacktestPrice] = useState([]);
@@ -216,7 +221,7 @@ export default function Landing() {
         const res = await fetch(histUrl);
         if (!res.ok) throw new Error(`Failed to fetch ${histUrl}: ${res.status} ${res.statusText}`);
         const json = await res.json();
-        setHistData(Array.isArray(json) ? json : []);
+        setHistData(filterSupportedTickers(json));
       } catch (e) {
         console.error('Landing history failed to load:', e);
         setHistData([]);
@@ -248,13 +253,13 @@ export default function Landing() {
 
       const dates = Array.from(new Set(buys.map((b) => b.date))).sort();
       if (!dates.length) {
-          setBacktestPick(null);
-          setBacktestPrice([]);
-          setBacktestPriceTicker('');
-          setBacktestSummary(null);
-          setBacktestScoreSeries([]);
-          return;
-        }
+        setBacktestPick(null);
+        setBacktestPrice([]);
+        setBacktestPriceTicker('');
+        setBacktestSummary(null);
+        setBacktestScoreSeries([]);
+        return;
+      }
 
       const targetAnchor = addDays(new Date(), -LANDING_BACKTEST_LOOKBACK_DAYS);
       let targetDate = dates[0];
@@ -675,18 +680,19 @@ export default function Landing() {
     };
 
     run();
-  }, [base, backtestPick, backtestPrice, backtestPriceTicker]);  return (
+  }, [base, backtestPick, backtestPrice, backtestPriceTicker]);
+
+  return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-white text-slate-900 relative overflow-hidden">
       {/* Background blobs */}
       <div className="pointer-events-none absolute -top-28 -left-28 h-[420px] w-[420px] rounded-full bg-blue-200/40 blur-3xl" />
       <div className="pointer-events-none absolute top-32 -right-28 h-[420px] w-[420px] rounded-full bg-indigo-200/40 blur-3xl" />
       <div className="pointer-events-none absolute bottom-0 left-1/2 -translate-x-1/2 h-[520px] w-[520px] rounded-full bg-sky-100/50 blur-3xl" />
 
-      {/* Top Nav */}
       <header className="max-w-6xl mx-auto px-6 pt-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4 rounded-3xl border border-white/60 bg-white/80 px-5 py-4 shadow-sm backdrop-blur">
           <div className="flex items-center gap-3">
-            <div className="h-16 w-16 rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+            <div className="h-14 w-14 rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
               <img
                 src="/tickwise_logo.png"
                 alt="TickWise logo"
@@ -699,34 +705,19 @@ export default function Landing() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-8 text-sm text-slate-600">
-            <a className="hover:text-slate-900 transition" href="#features">
-              Features
+          <div className="hidden md:flex items-center gap-6 text-sm text-slate-600">
+            <a className="hover:text-slate-900 transition" href="#product">
+              Product
+            </a>
+            <a className="hover:text-slate-900 transition" href="#signals">
+              Signals
             </a>
             <a className="hover:text-slate-900 transition" href="#how">
               How it works
             </a>
-            <Link
-              to="/ai-stock-analysis/"
-              onMouseEnter={preloadAiStockAnalysis}
-              onFocus={preloadAiStockAnalysis}
-              className="hover:text-slate-900 transition"
-            >
-              AI Stock Analysis
-            </Link>
-            <Link
-              to="/stock-analysis-tools/"
-              onMouseEnter={preloadStockAnalysisTools}
-              onFocus={preloadStockAnalysisTools}
-              className="hover:text-slate-900 transition"
-            >
-              Stock Analysis Tools
-            </Link>
-            <a href="mailto:support@tickwisetech.com?subject=TickWise%20Feedback"
-            className="hover:text-slate-900">
-            Contact
+            <a className="hover:text-slate-900 transition" href="#research">
+              Research
             </a>
-
             <a className="hover:text-slate-900 transition" href="#faq">
               FAQ
             </a>
@@ -737,141 +728,130 @@ export default function Landing() {
               onFocus={preloadDashboard}
               className="bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
             >
-              View Today's Picks
+              Open Dashboard
             </Link>
           </div>
 
-          {/* Mobile CTA */}
           <Link
             to="/picks/"
             onMouseEnter={preloadDashboard}
             onFocus={preloadDashboard}
             className="md:hidden bg-blue-600 text-white px-4 py-2 rounded-xl font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20"
           >
-            Picks
+            Dashboard
           </Link>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="max-w-6xl mx-auto px-6 pt-16 pb-10 text-center">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white/70 text-sm text-slate-600 shadow-sm backdrop-blur">
-          <span className="h-2 w-2 rounded-full bg-green-500" />
-          Daily AI signals - Updated after market close
-          <span className="inline-flex items-center gap-1 text-slate-500">
-            <Sparkles size={14} />
-          </span>
+      <section className="max-w-6xl mx-auto px-6 pt-14 pb-10">
+        <div className="max-w-4xl">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white/80 text-sm text-slate-600 shadow-sm backdrop-blur">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            Daily AI-ranked stock ideas for market close review
+            <Sparkles size={14} className="text-slate-400" />
+          </div>
+
+          <h1 className="mt-6 text-4xl md:text-6xl font-bold tracking-tight leading-[1.02]">
+            Daily stock signals with clear next steps.
+          </h1>
+
+          <p className="mt-5 max-w-2xl text-lg md:text-xl text-slate-600 leading-relaxed">
+            TickWise ranks stocks with one explainable score built from technical strength,
+            fundamental quality, and AI forecast ranges, so you can scan the market, compare
+            setups fast, and open a ticker with context already attached.
+          </p>
+
+          <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+            <Link
+              to="/picks/"
+              onMouseEnter={preloadDashboard}
+              onFocus={preloadDashboard}
+              className="w-full sm:w-auto bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 inline-flex items-center justify-center gap-2"
+            >
+              Open Dashboard <ArrowRight size={18} />
+            </Link>
+
+            <a
+              href="#signals"
+              className="w-full sm:w-auto px-8 py-3 rounded-xl text-lg font-semibold border border-slate-200 bg-white/80 hover:bg-white transition backdrop-blur inline-flex items-center justify-center"
+            >
+              See How It Works
+            </a>
+          </div>
         </div>
 
-        <h1 className="mt-6 text-4xl md:text-6xl font-bold tracking-tight leading-[1.05]">
-          Smarter Stock Picks, Powered by AI
-        </h1>
-
-        <p className="mt-4 text-lg md:text-xl text-slate-600 max-w-3xl mx-auto">
-          TickWise analyzes fundamental data, technical signals, and AI forecasts
-          to deliver clear Buy / Hold / Sell insights - daily.
-        </p>
-
-        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
-          <Link
-            to="/picks/"
-            onMouseEnter={preloadDashboard}
-            onFocus={preloadDashboard}
-            className="w-full sm:w-auto bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 inline-flex items-center justify-center gap-2"
-          >
-            Open Dashboard <ArrowRight size={18} />
-          </Link>
-
-          <a
-            href="#how"
-            className="w-full sm:w-auto px-8 py-3 rounded-xl text-lg font-semibold border border-slate-200 bg-white/70 hover:bg-white transition backdrop-blur"
-          >
-            How it works
-          </a>
-        </div>
-
-        {/* Stats strip */}
-        <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="mt-10 grid gap-4 sm:grid-cols-3">
           {stats.map((s) => (
             <div
               key={s.label}
-              className="rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-5 text-left shadow-sm"
+              className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-5 text-left shadow-sm"
             >
-              <div className="text-xs text-slate-500">{s.label}</div>
-              <div className="mt-1 font-semibold text-slate-900">{s.value}</div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">{s.label}</div>
+              <div className="mt-2 font-semibold text-slate-900">{s.value}</div>
             </div>
           ))}
         </div>
-      </section>
 
-      {/* Backtest summary */}
-      <section className="max-w-6xl mx-auto px-6 pb-10">
-        <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-6 shadow-sm">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500">Backtest Snapshot</div>
-              <div className="text-lg font-semibold">Top 15 buys from 120 days ago</div>
-            </div>
-            <div className="text-xs text-slate-500">
-              {backtestSummary?.date ? `As of ${backtestSummary.date}` : 'Loading history'}
-            </div>
-          </div>
-          {backtestLoading && (
-            <div className="text-sm text-slate-600">Calculating recent performance...</div>
-          )}
-          {!backtestLoading && backtestSummary && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                <div className="text-xs text-emerald-700">Avg Return</div>
-                <div className="mt-1 text-2xl font-semibold text-emerald-900">
-                  {fmtPct(backtestSummary.avg)}
-                </div>
-              </div>
-              <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-4">
-                <div className="text-xs text-cyan-700">Median Return</div>
-                <div className="mt-1 text-2xl font-semibold text-cyan-900">
-                  {fmtPct(backtestSummary.median)}
-                </div>
-              </div>
-              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-                <div className="text-xs text-amber-700">Win Rate</div>
-                <div className="mt-1 text-2xl font-semibold text-amber-900">
-                  {fmtPct(backtestSummary.winRate)}
-                </div>
-                <div className="text-xs text-amber-700 mt-1">
-                  Sample size: {backtestSummary.sample}
-                </div>
-              </div>
-            </div>
-          )}
-          {!backtestLoading && !backtestSummary && (
-            <div className="text-sm text-slate-600">Not enough data for a backtest snapshot.</div>
-          )}
+        <div id="product" className="mt-8 grid gap-4 md:grid-cols-3">
+          <ProductActionCard
+            title="Scan the market fast"
+            text="Start with a ranked board of Buy, Hold, and Sell signals instead of building a screener from scratch."
+            accent="cyan"
+          />
+          <ProductActionCard
+            title="Compare the signal stack"
+            text="See the TickWise score beside technical strength, fundamental quality, and AI upside range."
+            accent="emerald"
+          />
+          <ProductActionCard
+            title="Drill into one ticker"
+            text="Open the chart view to inspect forecast lines, score history, and the metrics driving the call."
+            accent="amber"
+          />
         </div>
       </section>
 
-      {/* Product preview */}
-      <section className="max-w-6xl mx-auto px-6 pb-16">
+      <section id="signals" className="max-w-6xl mx-auto px-6 pb-16">
+        <div className="mb-8 max-w-3xl">
+          <div className="text-xs uppercase tracking-[0.22em] text-slate-500">How It Works</div>
+          <h2 className="mt-3 text-3xl md:text-4xl font-bold tracking-tight">
+            Go from market scan to ticker detail in one flow.
+          </h2>
+          <p className="mt-3 text-slate-600 leading-relaxed">
+            Start with the ranked board, compare the signal stack, then open a ticker to inspect
+            the score, chart, and forecast context in detail.
+          </p>
+        </div>
+
         <div className="rounded-3xl border border-slate-200 bg-white/70 backdrop-blur shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div className="px-6 py-4 border-b border-slate-200 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
               <LineChart className="text-blue-600" size={20} />
-              <div className="font-semibold">Today's Signal Snapshot</div>
-              <span className="text-xs text-slate-500 hidden sm:inline">
-                {previewAsOf ? `As of ${previewAsOf}` : 'Preview'}
-              </span>
+              <div>
+                <div className="font-semibold">Today&apos;s Signal Snapshot</div>
+                <div className="text-xs text-slate-500">
+                  Ranked market board with score and chart context
+                </div>
+              </div>
             </div>
-            <div className="text-xs text-slate-500">Click "View Today's Picks" for live data</div>
+            <div className="text-xs text-slate-500">
+              Live board in the dashboard includes filters, detail panes, and full chart overlays
+            </div>
           </div>
 
           <div className="grid lg:grid-cols-5 gap-0">
-            {/* Left: mini table */}
             <div className="lg:col-span-3 p-6">
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <MiniStat label="Buy ideas" value={buyCount || '-'} tone="good" />
+                <MiniStat label="Hold watchlist" value={holdCount || '-'} tone="neutral" />
+                <MiniStat label="Sell risk" value={sellCount || '-'} tone="warn" />
+              </div>
+
               <div className="grid grid-cols-12 text-xs text-slate-500 pb-3 border-b border-slate-200">
                 <div className="col-span-2">Ticker</div>
                 <div className="col-span-4">Security</div>
                 <div className="col-span-2">Signal</div>
-                <div className="col-span-2 text-right">TickWise Score</div>
+                <div className="col-span-2 text-right">Score</div>
                 <div className="col-span-2 text-right">1M AI</div>
               </div>
 
@@ -881,7 +861,7 @@ export default function Landing() {
 
                 {!loadingStocks && previewRows.length === 0 && (
                 <div className="py-6 text-sm text-slate-500">
-                    Live preview unavailable. Click "View Today's Picks" to see the dashboard.
+                    Live preview unavailable. Open the dashboard to see the full market board.
                 </div>
                 )}
 
@@ -919,30 +899,22 @@ export default function Landing() {
               
             </div>
 
-            {/* Right: mock chart panel */}
-            <div className="lg:col-span-2 p-6 border-t lg:border-t-0 lg:border-l border-slate-200">
+            <div className="lg:col-span-2 p-6 border-t lg:border-t-0 lg:border-l border-slate-200 bg-slate-50/40">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xs text-slate-500">Backtest top pick</div>
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Score spotlight</div>
                   <div className="text-lg font-semibold">{backtestPick?.row?.ticker || "-"}</div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-2 text-xs text-slate-600">
-                    <span className="h-2 w-2 rounded-full bg-orange-400" />
-                    Buy trigger
-                  </span>
-                  <span className="inline-flex items-center gap-2 text-xs text-slate-600">
-                    <span className="h-2 w-2 rounded-full bg-sky-500" />
-                    TickWise score
-                  </span>
+                <div className="rounded-full bg-white px-3 py-1 text-xs text-slate-500 border border-slate-200">
+                  Backtest highlight
                 </div>
               </div>
 
-                            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-xs text-slate-500 mb-2">
                   {backtestPick
-                    ? `Backtest top pick: ${backtestPick.row.ticker} (buy on ${backtestPick.date})`
-                    : 'Backtest preview'}
+                    ? `Historical top pick: ${backtestPick.row.ticker} on ${backtestPick.date}`
+                    : 'Historical score preview'}
                 </div>
 
                 {backtestLoading ? (
@@ -1004,22 +976,31 @@ export default function Landing() {
               </div>
 
               <div className="mt-4 text-xs text-slate-500 leading-relaxed">
-                Preview only. Your dashboard shows full history, zoomable charts, and forecast lines.
+                The dashboard extends this preview with ticker drill-downs, filters, and score overlays.
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* SEO bridge */}
-      <section className="max-w-6xl mx-auto px-6 pb-16">
+      <section id="features" className="max-w-6xl mx-auto px-6 pb-16">
+        <div className="mb-10 max-w-3xl">
+          <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Capabilities</div>
+          <h2 className="mt-3 text-3xl md:text-4xl font-bold tracking-tight">
+            One score on the surface, full signal depth underneath.
+          </h2>
+          <p className="mt-3 text-slate-600 leading-relaxed">
+            The goal is not more widgets. The goal is faster market judgment with enough context to
+            trust the ranking.
+          </p>
+        </div>
         <div className="grid md:grid-cols-2 gap-6">
           <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-8 shadow-sm">
             <div className="text-xs uppercase tracking-wide text-slate-500">AI Stock Analysis</div>
-            <h3 className="mt-2 text-2xl font-semibold">Understand signals, not just prices</h3>
+            <h3 className="mt-2 text-2xl font-semibold">Understand the model and the signal logic</h3>
             <p className="mt-3 text-sm text-slate-600 leading-relaxed">
-              TickWise is an AI stock analysis platform that blends ML forecasts with technical
-              and fundamental signals. See why a ticker is rated Buy, Hold, or Sell.
+              Use the AI stock analysis page when you want the framework, methodology, and score
+              explanation without dropping straight into the dashboard.
             </p>
             <Link
               to="/ai-stock-analysis/"
@@ -1032,10 +1013,10 @@ export default function Landing() {
           </div>
           <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-8 shadow-sm">
             <div className="text-xs uppercase tracking-wide text-slate-500">Stock Analysis Tools</div>
-            <h3 className="mt-2 text-2xl font-semibold">Tools built for signal clarity</h3>
+            <h3 className="mt-2 text-2xl font-semibold">Explore the toolset behind the dashboard</h3>
             <p className="mt-3 text-sm text-slate-600 leading-relaxed">
-              Compare forecast ranges, technical momentum, and fundamental health in one place.
-              Filter, sort, and drill into the tools that matter most.
+              See how forecast ranges, factor scores, and ranking tools fit together before a user
+              starts screening the full market.
             </p>
             <Link
               to="/stock-analysis-tools/"
@@ -1049,68 +1030,112 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="max-w-6xl mx-auto px-6 pb-16">
-        <div className="text-center mb-10">
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">What TickWise does</h2>
-          <p className="mt-3 text-slate-600 max-w-2xl mx-auto">
-            Leverage all available data and calculate a single, interpretable score: The Tickwise Score
-          </p>
+      <section id="research" className="max-w-6xl mx-auto px-6 pb-16">
+        <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur p-6 shadow-sm mb-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Proof Snapshot</div>
+              <div className="mt-2 text-2xl font-semibold">Recent top-buy performance sample</div>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                Review a recent performance snapshot after you understand the ranking workflow and
+                the signal stack behind it.
+              </p>
+            </div>
+            <div className="text-xs text-slate-500">
+              {backtestSummary?.date ? `Signals from ${backtestSummary.date}` : 'Loading history'}
+            </div>
+          </div>
         </div>
+
+        {backtestLoading && (
+          <div className="mb-6 text-sm text-slate-600">Calculating recent performance...</div>
+        )}
+
+        {!backtestLoading && backtestSummary && (
+          <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+              <div className="text-xs text-emerald-700">Avg Return</div>
+              <div className="mt-1 text-2xl font-semibold text-emerald-900">
+                {fmtPct(backtestSummary.avg)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-4">
+              <div className="text-xs text-cyan-700">Median Return</div>
+              <div className="mt-1 text-2xl font-semibold text-cyan-900">
+                {fmtPct(backtestSummary.median)}
+              </div>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+              <div className="text-xs text-amber-700">Win Rate</div>
+              <div className="mt-1 text-2xl font-semibold text-amber-900">
+                {fmtPct(backtestSummary.winRate)}
+              </div>
+              <div className="text-xs text-amber-700 mt-1">
+                Sample size: {backtestSummary.sample}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!backtestLoading && !backtestSummary && (
+          <div className="mb-6 text-sm text-slate-600">Not enough data for a backtest snapshot.</div>
+        )}
 
         <div className="grid md:grid-cols-2 gap-6">
             <FeatureCard
                 icon={<Brain size={22} />}
-                title="AI-Driven Forecasts"
-                text="Machine-learning models predict near-term price ranges using historical behavior."
+                title="AI forecast ranges"
+                text="Machine-learning models estimate near-term upside and downside, not just a single target."
             />
             <FeatureCard
                 icon={<TrendingUp size={22} />}
-                title="Technical Strength"
-                text="Momentum, trend, and volatility signals distilled into clear scores."
+                title="Technical strength"
+                text="Momentum, trend, and volatility signals are translated into a clean technical score."
             />
             <FeatureCard
                 icon={<BarChart2 size={22} />}
-                title="Analysts Forecast"
-                text="Consensus analyst price targets provide a long‑horizon reality check, letting you compare ML signals against Wall Street expectations."
+                title="Analyst context"
+                text="Consensus analyst targets add a longer-horizon reference point alongside the model output."
             />
             <FeatureCard
                 icon={<PieChart size={22} />}
-                title="Fundamental Analysis"
-                text="Valuation and financial health signals distilled into a clear fundamental score."
+                title="Fundamental quality"
+                text="Valuation, profitability, and balance-sheet factors help prevent purely price-driven ranking."
             />
         </div>
 
       </section>
 
-      {/* How it works */}
       <section id="how" className="max-w-6xl mx-auto px-6 pb-16">
-        <div className="rounded-3xl border border-slate-200 bg-white/70 backdrop-blur p-8 shadow-sm">
+        <div className="rounded-3xl border border-slate-200 bg-white/75 backdrop-blur p-8 shadow-sm">
           <div className="flex items-center gap-3">
             <ShieldCheck className="text-slate-900" size={22} />
-            <h2 className="text-xl md:text-2xl font-bold tracking-tight">How Tickwise works</h2>
+            <div>
+              <h2 className="text-xl md:text-2xl font-bold tracking-tight">How TickWise works</h2>
+              <div className="text-sm text-slate-500">Simple method, explainable output</div>
+            </div>
           </div>
 
           <div className="mt-6 grid md:grid-cols-3 gap-6">
             <Step
               n="01"
               title="Collect"
-              text="Pull recent news and price history for covered tickers."
+              text="Gather price history, technical indicators, and company fundamentals for covered tickers."
             />
             <Step
               n="02"
               title="Score"
-              text="Compute sentiment, fundamental scores, technical signals, and AI forecasts."
+              text="Blend AI forecasts with technical and fundamental factors into a consistent ranking framework."
             />
             <Step
               n="03"
-              title="Rank"
-              text="Combine signals into a TickWise score and surface top picks."
+              title="Explain"
+              text="Surface the top ideas with the score, forecast ranges, and detail tabs needed for review."
             />
           </div>
 
           <div className="mt-8 text-sm text-slate-600">
-            The goal is clarity: fewer noisy indicators, more decision-ready signals.
+            The interface should remove friction between market scan, comparison, and ticker-level inspection.
           </div>
         </div>
       </section>
@@ -1125,13 +1150,13 @@ export default function Landing() {
             <div>
               <div className="inline-flex items-center gap-2 text-sm text-white/80">
                 <CheckCircle2 size={16} />
-                No setup - Instant insights
+                No setup - instant market context
               </div>
               <h3 className="mt-3 text-2xl md:text-3xl font-bold tracking-tight">
-                Ready to see today's signals?
+                Ready to review today&apos;s signals?
               </h3>
               <p className="mt-2 text-white/80 max-w-xl">
-                Open the dashboard to view top Buy and Sell picks and inspect charts with forecast overlays.
+                Open the dashboard to scan the board, filter the market, and inspect any ticker in detail.
               </p>
             </div>
 
@@ -1141,18 +1166,17 @@ export default function Landing() {
               onFocus={preloadDashboard}
               className="bg-white text-slate-900 px-6 py-3 rounded-xl font-semibold hover:bg-slate-100 transition inline-flex items-center gap-2"
             >
-              View Today's Picks <ArrowRight size={18} />
+              View Today&apos;s Picks <ArrowRight size={18} />
             </Link>
           </div>
         </div>
       </section>
 
-      {/* FAQ */}
       <section id="faq" className="max-w-6xl mx-auto px-6 pb-16">
         <div className="text-center mb-10">
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">FAQ</h2>
           <p className="mt-3 text-slate-600 max-w-2xl mx-auto">
-            Quick answers to common questions.
+            Quick answers before you open the dashboard.
           </p>
         </div>
 
@@ -1163,15 +1187,15 @@ export default function Landing() {
           />
           <FaqItem
             q="How often is it updated?"
-            a="Typically once per day after market close (depending on your data pipeline schedule)."
+            a="Typically once per day after market close, depending on the data pipeline schedule."
           />
           <FaqItem
             q="What's inside the TickWise score?"
-            a="A weighted blend of sentiment, fundamental score, technical indicators, and AI forecasts designed for interpretability."
+            a="A weighted blend of technical, fundamental, and AI forecast signals designed to keep the ranking interpretable."
           />
           <FaqItem
-            q="Can I drill into a ticker?"
-            a="Yes. The dashboard lets you expand a ticker row and view a price chart with forecast overlays."
+            q="Can I inspect an individual ticker?"
+            a="Yes. The dashboard supports ticker drill-downs with charts, forecast overlays, and detailed factor tabs."
           />
         </div>
       </section>
@@ -1203,7 +1227,8 @@ export default function Landing() {
   );
 }
 
-function FeatureCard({ icon, title, text }) {  return (
+function FeatureCard({ icon, title, text }) {
+  return (
     <div className="bg-white/80 backdrop-blur rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition">
       <div className="h-12 w-12 rounded-2xl bg-blue-50 text-blue-600 grid place-items-center mb-4">
         {icon}
@@ -1214,7 +1239,81 @@ function FeatureCard({ icon, title, text }) {  return (
   );
 }
 
-function Step({ n, title, text }) {  return (
+function ProductActionCard({ title, text, accent }) {
+  const accents = {
+    cyan: 'from-cyan-50 to-white border-cyan-200',
+    emerald: 'from-emerald-50 to-white border-emerald-200',
+    amber: 'from-amber-50 to-white border-amber-200',
+  };
+  const accentClass = accents[accent] || 'from-slate-50 to-white border-slate-200';
+
+  return (
+    <div className={`rounded-3xl border bg-gradient-to-br ${accentClass} p-6 shadow-sm`}>
+      <div className="text-xs uppercase tracking-wide text-slate-500">What you can do</div>
+      <h3 className="mt-3 text-xl font-semibold text-slate-900">{title}</h3>
+      <p className="mt-3 text-sm text-slate-600 leading-relaxed">{text}</p>
+    </div>
+  );
+}
+
+function HeroSignalCard({ label, stock, fmtPct, get1mAiPct }) {
+  if (!stock) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+        <div className="mt-2 text-sm text-slate-500">Waiting for live market data.</div>
+      </div>
+    );
+  }
+
+  const score = Number(stock.tickwise_score);
+  const aiPct = get1mAiPct(stock);
+  const aiText = aiPct == null ? '-' : fmtPct(aiPct);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{stock.ticker || '-'}</div>
+          <div className="text-sm text-slate-500">{stock.Security || stock.company || '-'}</div>
+        </div>
+        <SignalChip value={stock.recommendation || '-'} />
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <div className="rounded-xl bg-slate-50 px-3 py-2">
+          <div className="text-xs text-slate-500">Score</div>
+          <div className="font-semibold text-slate-900">
+            {Number.isFinite(score) ? score.toFixed(0) : '-'}
+          </div>
+        </div>
+        <div className="rounded-xl bg-slate-50 px-3 py-2">
+          <div className="text-xs text-slate-500">1M AI</div>
+          <div className="font-semibold text-slate-900">{aiText}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, tone }) {
+  const toneCls =
+    tone === 'good'
+      ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+      : tone === 'warn'
+        ? 'border-amber-200 bg-amber-50/70 text-amber-900'
+        : 'border-slate-200 bg-slate-50 text-slate-900';
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${toneCls}`}>
+      <div className="text-xs uppercase tracking-wide opacity-70">{label}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function Step({ n, title, text }) {
+  return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="text-xs font-semibold text-slate-500">{n}</div>
       <div className="mt-2 text-lg font-semibold">{title}</div>
@@ -1229,10 +1328,10 @@ function SignalChip({ value }) {
     v === 'buy'
       ? 'bg-green-50 text-green-700 border-green-200'
       : v === 'sell'
-      ? 'bg-red-50 text-red-700 border-red-200'
-      : 'bg-slate-50 text-slate-700 border-slate-200';
+        ? 'bg-red-50 text-red-700 border-red-200'
+        : 'bg-slate-50 text-slate-700 border-slate-200';
 
-                return (
+  return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${cls}`}>
       {value}
     </span>
@@ -1244,10 +1343,10 @@ function Metric({ label, value, tone }) {
     tone === 'good'
       ? 'bg-green-50 text-green-700 border-green-200'
       : tone === 'warn'
-      ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
-      : 'bg-slate-50 text-slate-700 border-slate-200';
+        ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+        : 'bg-slate-50 text-slate-700 border-slate-200';
 
-                return (
+  return (
     <div className={`rounded-xl border ${toneCls} px-3 py-2`}>
       <div className="text-[11px] opacity-80">{label}</div>
       <div className="text-xs font-semibold">{value}</div>
@@ -1255,59 +1354,12 @@ function Metric({ label, value, tone }) {
   );
 }
 
-function FaqItem({ q, a }) {  return (
+function FaqItem({ q, a }) {
+  return (
     <div className="rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-6 shadow-sm">
       <div className="font-semibold">{q}</div>
       <div className="mt-2 text-sm text-slate-600 leading-relaxed">{a}</div>
     </div>
-  );
-}
-
-
-function Sparkline({ values, height = 140, padding = 8 }) {
-  if (!values || values.length < 2) {  return (
-      <div className="h-[140px] rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white" />
-    );
-  }
-
-  const w = 320; // virtual width for SVG scaling
-  const h = height;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = Math.max(1e-9, max - min);
-
-  const pts = values.map((v, i) => {
-    const x = padding + (i * (w - 2 * padding)) / (values.length - 1);
-    const y = padding + ((max - v) * (h - 2 * padding)) / range;
-    return [x, y];
-  });
-
-  const lineD = `M ${pts.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join(' L ')}`;
-  const areaD = `${lineD} L ${pts[pts.length - 1][0].toFixed(2)} ${(h - padding).toFixed(2)} L ${pts[0][0].toFixed(2)} ${(h - padding).toFixed(2)} Z`;
-
-  const last = values[values.length - 1];
-  const first = values[0];
-  const up = last >= first;
-
-                return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[140px] rounded-xl border border-slate-100 bg-white">
-      <defs>
-        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-          {/* no explicit colors requested; keeping subtle defaults */}
-          <stop offset="0%" stopColor={up ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)'} />
-          <stop offset="100%" stopColor="rgba(0,0,0,0)" />
-        </linearGradient>
-      </defs>
-
-      {/* grid */}
-      <line x1="0" y1={h / 2} x2={w} y2={h / 2} stroke="rgba(148,163,184,0.35)" strokeWidth="1" />
-      <line x1="0" y1={h / 4} x2={w} y2={h / 4} stroke="rgba(148,163,184,0.18)" strokeWidth="1" />
-      <line x1="0" y1={(3 * h) / 4} x2={w} y2={(3 * h) / 4} stroke="rgba(148,163,184,0.18)" strokeWidth="1" />
-
-      {/* fill + line */}
-      <path d={areaD} fill="url(#sparkFill)" />
-      <path d={lineD} fill="none" stroke={up ? 'rgb(34,197,94)' : 'rgb(239,68,68)'} strokeWidth="2.5" />
-    </svg>
   );
 }
 

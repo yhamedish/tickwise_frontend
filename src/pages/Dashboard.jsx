@@ -3,7 +3,7 @@ import { List } from 'react-window';
 import StockChart from '../StockChart';
 import PortfolioReturnChart from '../PortfolioReturnChart';
 import '../index.css';
-import { BarChart2, ThumbsUp, Activity } from 'lucide-react';
+import { BarChart2, ThumbsUp, Activity, House } from 'lucide-react';
 
 
 // Dummy fallback data. If the call to VITE_STOCKS_JSON_SAS_URL fails, the
@@ -23,6 +23,14 @@ const DEFAULT_BACKTEST_TOP_COUNT = 15;
 const DEFAULT_BACKTEST_ENTRY_THRESHOLD = 70;
 const BACKTEST_MIN_HOLD_DAY_OPTIONS = [0, 3, 5, 7, 10, 15, 30];
 const DEFAULT_BACKTEST_MIN_HOLD_DAYS = 0;
+const BACKTEST_BENCHMARK_TICKER = 'SPY';
+const BACKTEST_BENCHMARK_LABEL = 'S&P 500 Buy & Hold';
+const EXCLUDED_TICKERS = new Set(['SPY']);
+
+function filterSupportedTickers(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row) => !EXCLUDED_TICKERS.has(String(row?.ticker || '').toUpperCase()));
+}
 
 // Helper to generate forecast lines for the chart. Takes the last close price and applies
 // a percentage change.
@@ -405,6 +413,7 @@ export default function Dashboard() {
   const [backtestMinHoldDays, setBacktestMinHoldDays] = useState(DEFAULT_BACKTEST_MIN_HOLD_DAYS);
   const [backtestResultTab, setBacktestResultTab] = useState('summary');
   const [backtestSeries, setBacktestSeries] = useState([]);
+  const [backtestBenchmarkSeries, setBacktestBenchmarkSeries] = useState([]);
   const [predictionAccuracy, setPredictionAccuracy] = useState({
     correct: 0,
     total: 0,
@@ -425,7 +434,7 @@ export default function Dashboard() {
     const fetchStocks = async () => {
       if (!scoresUrl) {
         console.warn('VITE_STOCKS_JSON_SAS_URL is not set. Falling back to dummy data.');
-        setStocksData(dummyData);
+        setStocksData(filterSupportedTickers(dummyData));
         setLoadingStocks(false);
         return;
       }
@@ -436,15 +445,15 @@ export default function Dashboard() {
         }
         const json = await response.json();
         if (Array.isArray(json)) {
-          setStocksData(json);
+          setStocksData(filterSupportedTickers(json));
         } else {
           console.warn('Stocks JSON did not return an array. Falling back to dummy data.');
-          setStocksData(dummyData);
+          setStocksData(filterSupportedTickers(dummyData));
         }
       } catch (err) {
         console.error('Error fetching stocks JSON:', err);
         setStocksError(err);
-        setStocksData(dummyData);
+        setStocksData(filterSupportedTickers(dummyData));
       } finally {
         setLoadingStocks(false);
       }
@@ -465,7 +474,7 @@ export default function Dashboard() {
           throw new Error(`Failed to fetch history data: ${response.status} ${response.statusText}`);
         }
         const json = await response.json();
-        setHistData(Array.isArray(json) ? json : json ?? []);
+        setHistData(filterSupportedTickers(Array.isArray(json) ? json : json ?? []));
       } catch (err) {
         console.error('Error fetching history JSON:', err);
         setHistData([]);
@@ -1063,11 +1072,52 @@ export default function Dashboard() {
           });
         };
 
+        const buildBenchmarkSeries = async (timeline) => {
+          if (!targetDate || !Array.isArray(timeline) || timeline.length === 0) return [];
+          let benchmarkHist = historyCache.get(BACKTEST_BENCHMARK_TICKER);
+          if (benchmarkHist === undefined) {
+            benchmarkHist = await getHistoryForTicker(BACKTEST_BENCHMARK_TICKER);
+          }
+          if (!benchmarkHist?.dates?.length || !benchmarkHist?.openDates?.length) return [];
+
+          const benchmarkEntry = findOpenAfter(
+            benchmarkHist.openDates,
+            benchmarkHist.openByDate,
+            targetDate
+          );
+          if (!benchmarkEntry || !Number.isFinite(benchmarkEntry.price)) return [];
+
+          return timeline.map((time) => {
+            if (time < benchmarkEntry.date) {
+              return { time, value: 0 };
+            }
+            const close = findCloseAtOrBefore(benchmarkHist.dates, benchmarkHist.byDate, time);
+            if (!Number.isFinite(close)) {
+              return { time, value: null };
+            }
+            return {
+              time,
+              value: ((close - benchmarkEntry.price) * 100) / benchmarkEntry.price,
+            };
+          });
+        };
+
         const portfolioSeries = buildPortfolioSeries();
+        const benchmarkSeries = await buildBenchmarkSeries(portfolioSeries.map((point) => point.time));
+        const benchmarkReturn =
+          [...benchmarkSeries]
+            .reverse()
+            .find((point) => Number.isFinite(point?.value))?.value ?? null;
 
         if (returns.length === 0) {
-          setBacktestStats({ sample: 0 });
+          setBacktestStats({
+            sample: 0,
+            benchmarkTicker: BACKTEST_BENCHMARK_TICKER,
+            benchmarkLabel: BACKTEST_BENCHMARK_LABEL,
+            benchmarkReturn,
+          });
           setBacktestSeries([]);
+          setBacktestBenchmarkSeries([]);
           return;
         }
         const avg = returns.reduce((s, v) => s + v, 0) / returns.length;
@@ -1105,8 +1155,12 @@ export default function Dashboard() {
           picksPerDay: backtestTopCount,
           targetDate,
           detailRows,
+          benchmarkTicker: BACKTEST_BENCHMARK_TICKER,
+          benchmarkLabel: BACKTEST_BENCHMARK_LABEL,
+          benchmarkReturn,
         });
         setBacktestSeries(portfolioSeries);
+        setBacktestBenchmarkSeries(benchmarkSeries);
       } finally {
         setBacktestLoading(false);
       }
@@ -1210,7 +1264,7 @@ export default function Dashboard() {
   // Search and filter state.
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
-  const [showFilters, setShowFilters] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
   const [detailTab, setDetailTab] = useState('recommendation');
   const [scoreSeriesSelection, setScoreSeriesSelection] = useState({
     tickwise: false,
@@ -1371,21 +1425,81 @@ export default function Dashboard() {
               <div className="text-xs text-slate-500">AI Powered Market Intelligence</div>
             </div>
           </a>
-          <a href="/" className="text-sm text-slate-600 hover:text-slate-900">Home</a>
+          <a
+            href="/"
+            aria-label="Home"
+            title="Home"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+          >
+            <House className="h-4 w-4" />
+          </a>
         </div>
       </header>
       {loadingStocks && (
         <p className="text-center text-gray-600 mb-4">Loading stock recommendations...</p>
       )}
-      <section className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900 mb-2">
-          AI-Powered Stock Picks and Buy/Sell Signals
-        </h1>
-        <p className="text-slate-600 max-w-3xl">
-          TickWise is an AI-powered stock analysis platform that helps investors identify
-          high-confidence buy and sell opportunities. It combines technical indicators,
-          fundamental analysis, and machine-learning forecasts to rank stocks daily.
-        </p>
+
+      <section className="mb-6 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-sm backdrop-blur">
+        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+              Daily market signals
+            </div>
+            <h1 className="mt-4 text-3xl md:text-4xl font-semibold tracking-tight text-slate-900">
+              Scan the board, compare the signal stack, then drill into one ticker.
+            </h1>
+            <p className="mt-4 max-w-3xl text-slate-600 leading-relaxed">
+              TickWise helps investors identify high-confidence buy and sell opportunities by
+              combining technical indicators, fundamental analysis, and machine-learning forecasts
+              into one ranked market view.
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <a
+                href="#signals-table"
+                className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 transition"
+              >
+                View signals
+              </a>
+              <a
+                href="#detail-panel"
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                Open ticker detail
+              </a>
+              <a
+                href="#backtest-lab"
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                Open backtest
+              </a>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            <div className="rounded-2xl border border-cyan-200 bg-cyan-50/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-cyan-700">Step 1</div>
+              <div className="mt-1 font-semibold text-slate-900">Scan the ranked board</div>
+              <p className="mt-2 text-sm text-slate-600">
+                Start with the full market list and sort by TickWise Score, technicals, or AI range.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-emerald-700">Step 2</div>
+              <div className="mt-1 font-semibold text-slate-900">Refine with filters</div>
+              <p className="mt-2 text-sm text-slate-600">
+                Reveal screening filters when you want to narrow the market by signal type or score ranges.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+              <div className="text-xs uppercase tracking-wide text-amber-700">Step 3</div>
+              <div className="mt-1 font-semibold text-slate-900">Inspect one ticker deeply</div>
+              <p className="mt-2 text-sm text-slate-600">
+                Click a row to open chart detail, forecast overlays, and technical and fundamental tabs.
+              </p>
+            </div>
+          </div>
+        </div>
       </section>
 
       
@@ -1441,7 +1555,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <section className="mb-6 grid grid-cols-1 xl:grid-cols-12 gap-4">
+      <section id="backtest-lab" className="mb-6 grid grid-cols-1 xl:grid-cols-12 gap-4">
         <div className="xl:col-span-4 bg-white/90 border border-slate-200 rounded-2xl p-5 shadow-sm backdrop-blur">
           <div className="mb-4">
             <div className="text-sm text-slate-500">Backtest Setup</div>
@@ -1702,9 +1816,19 @@ export default function Dashboard() {
             backtestSeries?.length > 0 ? (
               <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <div className="px-4 pt-4">
-                  <PortfolioReturnChart data={backtestSeries} height={260} />
+                  <PortfolioReturnChart
+                    data={backtestSeries}
+                    benchmarkData={backtestBenchmarkSeries}
+                    benchmarkLabel={BACKTEST_BENCHMARK_LABEL}
+                    height={260}
+                  />
                 </div>
                 <div className="px-4 pb-4 text-xs text-slate-500">
+                  {Number.isFinite(backtestStats?.benchmarkReturn) && (
+                    <span className="mr-3">
+                      Benchmark: {BACKTEST_BENCHMARK_LABEL} ({formatPct(backtestStats.benchmarkReturn)})
+                    </span>
+                  )}
                   Hover a date to see portfolio holdings and returns for that day.
                 </div>
               </div>
@@ -1780,7 +1904,7 @@ export default function Dashboard() {
 
       <div className="flex items-center justify-between mb-3">
         <div className="text-sm text-slate-600">
-          Filters {showFilters ? 'visible' : 'hidden'}
+          Screening filters {showFilters ? 'visible' : 'hidden'}
         </div>
         <button
           type="button"
@@ -1860,7 +1984,7 @@ export default function Dashboard() {
       )}
 
       {/* Render all stocks */}
-      <div className="mb-10">
+      <div id="signals-table" className="mb-10">
         <h2 className="text-xl font-semibold mb-4">All Stocks</h2>
         <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
           <div
@@ -1923,7 +2047,7 @@ export default function Dashboard() {
         </div>
       </div>
       {selectedStock && (
-        <div className="mb-10 bg-white/95 rounded shadow-sm border border-slate-200 p-4 backdrop-blur">
+        <div id="detail-panel" className="mb-10 bg-white/95 rounded shadow-sm border border-slate-200 p-4 backdrop-blur">
           <div className="flex items-center justify-between mb-2">
             <div className="text-lg font-semibold">
               {selectedStock.ticker} Forecast Detail
